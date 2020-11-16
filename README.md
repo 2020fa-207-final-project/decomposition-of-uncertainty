@@ -1,15 +1,15 @@
 to setup the env:  
 `pip install pipenv`  
-`$pipenv install --dev`
+`pipenv install --dev`
 
 to install new packages:  
-`$pipenv install ... # some package`
+`pipenv install ... # some package`
 
 to run tests:  
-`$pipenv run pytest`  
+`pipenv run pytest`  
 or  
-`$pipenv shell`  
-`$pytest`  
+`pipenv shell`  
+`pytest`  
 
 to enter the shell:  
 `pipenv shell`  
