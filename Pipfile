@@ -11,6 +11,8 @@ pytest-cov = "*"
 pandas = "*"
 numpy = "*"
 pymc3 = "*"
+ipykernel = "*"
+jupyter = "*"
 
 [requires]
 python_version = "3.7"
