@@ -6,13 +6,12 @@ verify_ssl = true
 [dev-packages]
 pytest = "*"
 pytest-cov = "*"
+ipykernel = "*"
+jupyter = "*"
 
 [packages]
 pandas = "*"
 numpy = "*"
-pymc3 = "*"
-ipykernel = "*"
-jupyter = "*"
 
 [requires]
 python_version = "3.7"
