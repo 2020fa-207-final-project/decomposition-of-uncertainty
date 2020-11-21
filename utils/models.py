@@ -37,7 +37,7 @@ class neural_network:
         else:
             assert type(weights) == np.ndarray, "Error: Weights must be a numpy array"
             assert len(weights.shape) == 2, "Error: Weights must be specified as a 2D numpy array"
-            assert weights.shape[1] == self.D, f"Error: Weight dimensions must match the shape specified in the architecture (num_weights={self.D})"
+            assert weights.shape[1] == self.D, f"Error: Weight dimensions must match the shape specified in the architecture ((1,{self.D}))"
             self.weights = weights
 
     def _calculate_network_size(self):
@@ -72,6 +72,12 @@ class neural_network:
         assert weights.shape[1] == self.D, f"Error: Weight dimensions must match the shape specified in the architecture (num_weights={self.D})"
         self.weights = weights
         return
+
+    def get_weights(self):
+        '''
+        Simple wrapper to return weights
+        '''
+        return self.weights
 
     @staticmethod
     def relu(x):
@@ -138,6 +144,7 @@ class neural_network:
             values_in = outputs
 
         return outputs
+        
         
 
 
