@@ -75,7 +75,7 @@ class neural_network:
 
     @staticmethod
     def relu(x):
-        return np.max(np.zeros(shape=x.shape), x)
+        return np.maximum(np.zeros(shape=x.shape), x)
 
     @staticmethod
     def identity(x):
@@ -94,42 +94,50 @@ class neural_network:
         '''
         # Check X dimensions
         if len(X.shape) == 2:
-            assert X.shape[0] == D_in
-            X = X.reshape((1, D_in, -1))
+            assert X.shape[0] == self.layers['input_n'], f"Error: if 2D, X[0] must match input dimension ({self.layers['input_n']})"
+            X = X.reshape((1, self.layers['input_n'], -1))
+        elif len(X.shape) == 3:
+            assert X.shape[1] == self.layers['input_n'], f"Error: If 3D, X[1] must match input dimension ({self.layers['input_n']})"
         else:
-            assert X.shape[1] == D_in
+            raise ValueError("Error: Data input shape must be either 2D or 3D")
 
         # Copy data to values to iterate through the network
-        values = X.copy()
+        values_in = X.copy()
 
         weights = self.weights.T
 
         for i, _ in enumerate(self._layers_D):
-
+            
             if i == 0:
                 layer_weights = weights[ 0 : self._layers_D[i] ]
             else:
-                layer_weights = weights[ (self._layers_D[i]-1) : self._layers_D[i] ]
+                layer_weights = weights[ np.sum(self._layers_D[0:i]) : (np.sum(self._layers_D[0:i])+self._layers_D[i]) ]
 
             # If Biases are enabled for this layer split weights from biases, else set biases to zero
             if self.layers['biases'][i]:
-                W = layer_weights[ 0 : self.layers['all_layers_shape'][i] ]
+                W = layer_weights[ 0 : -self.layers['all_layers_shape'][i] ]
                 b = layer_weights[ -self.layers['all_layers_shape'][i] : ]
             else:
                 W = layer_weights
                 b = np.zeros(self.layers['all_layers_shape'][i])
 
             # Shape and calculate the pre activation output
-            W = W.T.reshape((-1, H, D_in))
-            b = b.T.reshape((-1, H, 1))
-            pre_activation = np.matmul(W, values) 
-
+            W = W.T.reshape((-1, self.layers['all_layers_shape'][i], values_in.shape[1]))
+            b = b.T.reshape((-1, self.layers['all_layers_shape'][i], 1))
+            
+            pre_activation = np.matmul(W, values_in) + b
+            
             if self.layers['activations'][i] == 'relu':
-
+                outputs = self.relu(pre_activation)
             elif self.layers['activations'][i] == 'linear':
-
+                outputs = self.identity(pre_activation)
             else:
                 raise ValueError(f"Error: Unexpected activation type - {self.layers['activations'][i]}")
+
+            # Update for next iteration
+            values_in = outputs
+
+        return outputs
         
 
 
