@@ -1,3 +1,5 @@
+import json
+import os
 import time
 
 from autograd import numpy as np
@@ -284,6 +286,52 @@ class HMC:
 
         # Return new samples:
         return np.vstack(samples)
+
+    def save_state(self, filepath, replace=False):
+        # Get raw samples (as list):
+        raw_samples = self.raw_samples
+        if not isinstance(raw_samples, list):
+            raw_samples = raw_samples.tolist()
+        # Get samples (as list):
+        samples = self.samples
+        if not isinstance(samples, list):
+            samples = samples.tolist()
+        # Get random state:
+        random_state = list(self.np_random.get_state())
+        random_state[1] = random_state[1].tolist()
+        # Make dictionary:
+        hmc_state = {
+            'raw_samples' : raw_samples,
+            'samples' : samples,
+            'random_state' : random_state,
+        }
+        # Save dictionary as json:
+        filename = filepath.split('/')[-1]
+        directory = filepath[:-len(filename)]
+        if not os.path.isdir('./'+directory):
+            raise FileNotFoundError(f"Make sure directory exists: {directory}")
+        if not replace and os.path.isfile(filename):
+            raise FileExistsError(f"Operation would overwrite file: {filepath}")
+        with open(filepath, 'w') as f:
+            json.dump(hmc_state, f, indent=4)
+        print(f"Saved HMC state : {filepath} .")
+        
+    def load_state(self, filepath):
+        # Load dictionary:
+        with open(filepath, 'r') as f:
+            hmc_state = json.load(f)
+        # Get raw samples:
+        raw_samples = np.vstack(hmc_state['raw_samples'])
+        self.raw_samples = raw_samples
+        # Get samples:
+        samples = np.vstack(hmc_state['samples'])
+        self.samples = samples
+        # Get random state:
+        random_state = hmc_state['random_state']
+        random_state[1] = np.array(random_state[1])
+        random_state = tuple(random_state)
+        self.np_random.set_state(random_state)
+        print(f"Loaded HMC state : {filepath} .")
     
 
 class BBVI:
