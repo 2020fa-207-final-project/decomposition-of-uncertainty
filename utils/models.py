@@ -155,22 +155,54 @@ class BNN:
 
 
 class BNN_LV(BNN):
+    """
+    Implementation of Bayesian Neural Network with Latent Variables
+    https://arxiv.org/pdf/1605.07127.pdf  Section 2.2.
+    """
+
     def __init__(self, architecture, random = None, weights = None):
+        """
+        Uses the same architecture as the BNN superclass,
+        but expects additional keys:
+            gamma : standard deviation of the input noise (inserted as a feature).
+            sigma : list of standard deviations of the output noise
+                (added in each dimension of the output).
+                Expects a list, where each column corresponds to a dimension of Y.
+        """
         # Add a noise input.
         architecture = architecture.copy()
         architecture['input_n'] += 1
         # Get standard deviation of noise:
-        self.gamma = architecture['gamma']
+        self.gamma = architecture['gamma']  # Scalar.
+        self.sigma = architecture['sigma']  # List.
+        # Check dimensions:
+        try:
+            self.gamma = float(self.gamma)
+        except:
+            raise ValueError("The standard deviation of the latent noise feature should be a scalar.")
+        self.sigma = np.array([self.sigma]).flatten()  # Coerce to array.
+        if len(self.sigma) != architecture['output_n']:
+            raise ValueError("The standard deviation of the output noise should match the dimension of the output.")
         # Build a neural_network:
         super().__init__(architecture, random=random, weights=weights)
     
     def add_input_noise(self,X):
-        Z = self.random.randn(*X.shape[:-1],1) * self.gamma
+        """
+        Add a feature of input noise drawn from a Gaussian distribution
+        with mean 0 and the standard deviation.
+        """
+        Z_shape = tuple((*X.shape[:-1],1))
+        Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
         return np.append(X,Z, axis=-1)
     
     def add_output_noise(self,Y):
-        e = self.random.randn(*Y.shape) * self.gamma
-        return Y + e
+        """
+        Corrupt output with additive noise drawn from a Gaussian distribution
+        with mean 0 and a standard deviation specified for each dimension of the output.
+        """
+        Eps_shape = Y.shape
+        Eps = self.random.normal(loc=0, scale=self.sigma, size=Eps_shape)
+        return Y + Eps
         
     def forward(self, X):
         X_ = self.add_input_noise(X)
