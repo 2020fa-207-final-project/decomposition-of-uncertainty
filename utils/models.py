@@ -144,11 +144,28 @@ class neural_network:
             values_in = outputs
 
         return outputs
-        
-        
 
 
-class bnn_lv(neural_network):
+class BNN_LV(neural_network):
     def __init__(self, architecture, random = None, weights = None):
-
-        pass
+        # Add a noise input.
+        architecture = architecture.copy()
+        architecture['input_n'] += 1
+        # Get standard deviation of noise:
+        self.gamma = architecture['gamma']
+        # Build a neural_network:
+        super().__init__(architecture, random=random, weights=weights)
+    
+    def add_input_noise(self,X):
+        Z = self.random.randn(*X.shape[:-1],1) * self.gamma
+        return np.append(X,Z, axis=-1)
+    
+    def add_output_noise(self,Y):
+        e = self.random.randn(*Y.shape) * self.gamma
+        return Y + e
+        
+    def forward(self, X):
+        X_ = self.add_input_noise(X)
+        Y_ = super().forward(X_)
+        Y = self.add_output_noise(Y_)
+        return Y
