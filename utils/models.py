@@ -1,6 +1,6 @@
 import numpy as np
 
-class neural_network:
+class BNN:
     def __init__(self, architecture, random = None, weights = None):
         '''
 
@@ -154,7 +154,7 @@ class neural_network:
         return self.D
 
 
-class BNN_LV(neural_network):
+class BNN_LV(BNN):
     def __init__(self, architecture, random = None, weights = None):
         # Add a noise input.
         architecture = architecture.copy()
