@@ -141,6 +141,18 @@ class neural_network:
 
         return outputs
 
+    @property
+    def n_in(self):
+        return self.layers['input_n']
+
+    @property
+    def n_out(self):
+        return self.layers['output_n']
+
+    @property
+    def n_weights(self):
+        return self.D
+
 
 class BNN_LV(neural_network):
     def __init__(self, architecture, random = None, weights = None):
