@@ -87,10 +87,6 @@ class neural_network:
     def identity(x):
         return x
 
-    @staticmethod
-    def additive_noise(cov):
-        return np.random.normal(0, np.sqrt(cov))
-
     def fit(self, X, y):
         pass
 
