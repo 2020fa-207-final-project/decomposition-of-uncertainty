@@ -207,7 +207,7 @@ class WetChicken2D:
             assert action in self.valid_actions, f"Action {action} is not a valid action: {self.valid_actions}"
             return action
 
-    def update(self):
+    def update(self, policy=None):
         """
         Simulate one step and returns True if the episode will continue or False if it has ended.
         """
@@ -215,7 +215,7 @@ class WetChicken2D:
         assert self.step_count<self.max_steps, f"Episode already over -- step count ({self.step_count}) reached max ({self.max_steps})."
 
         self.noise = self.simulate_noise()
-        self.action = self.select_action()
+        self.action = self.select_action(policy=policy)
         self.state = self.simulate_transition()
 
         if ( self.state[1] == 0 ) or ( self.step_count >= self.max_steps ):
@@ -223,10 +223,10 @@ class WetChicken2D:
         else:
             return True
 
-    def run(self, episodes=1_000, progress=None, max_total_steps=1e6):
+    def run(self, episodes=1_000, policy=None, progress=None, max_total_steps=1e6):
         total_steps = 0
         for ep in range(episodes):
-            while total_steps<max_total_steps and self.update():
+            while total_steps<max_total_steps and self.update(policy=policy):
                 total_steps += 1
             if progress and (ep+1)%progress == 0:
                 print(f"Episode {ep+1}/{episodes} took {self.step_count} steps.")
