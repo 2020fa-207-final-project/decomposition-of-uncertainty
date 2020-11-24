@@ -12,6 +12,7 @@ jupyter = "*"
 [packages]
 pandas = "*"
 numpy = "*"
+autograd = "*"
 
 [requires]
 python_version = "3.7"
