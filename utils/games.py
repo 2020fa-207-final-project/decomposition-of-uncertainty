@@ -40,9 +40,8 @@ class WetChicken2D:
         self.W = W  # Width of river (x=0 and x=W are in the river, x=-1 and x=W+1 are not).
 
         # Define valid actions:
-        #   Canoeist can fight current, drift, or move side to side.
-        #   (All actions include at least one unit upstream padding, to combat current).
-        self.valid_actions = [(0,+1),(-1,+1),(+1,+1),(0,+2)]
+        #   Canoeist can drift, or move side to side, or paddle against current.
+        self.valid_actions = [(0,0),(-1,0),(+1,0),(0,+1)]
 
         # Create placeholders for state values:
         self.state_history = None
