@@ -1,4 +1,6 @@
-import numpy as np
+from autograd import numpy as np
+from autograd import grad
+from autograd.misc.optimizers import adam
 
 class BNN:
     """
@@ -11,10 +13,8 @@ class BNN:
     """
 
     def __init__(self, architecture, seed = None, weights = None):
-        '''
-    
-        '''
-         # Layer Assertions
+        
+        # Layer Assertions
         assert len(architecture['biases']) == len(architecture['activations']), "Error: Mismatch in layer dimensions - biases vs activations"
         assert (len(architecture['biases'])-1) == len(architecture['hidden_layers']), "Error: Mismatch in layer dimensions - must be 1 fewer hidden layer than biases/activations"
         for bias in architecture['biases']:
@@ -218,8 +218,40 @@ class BNN:
     def identity(x):
         return x
 
-    def fit(self, X, y):
-        pass
+    def fit(self, X, Y, step_size=0.01, max_iteration=5000, check_point=100, regularization_coef=None):
+        '''
+
+        '''
+        if len(X.shape) < 2:
+            raise ValueError("X should be (at least) 2 dimensional.")
+        assert X.shape[-1]==self.M, f"Last dimension of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
+        
+        def objective(W, t):
+            ''' Callbacks for each optimization step '''
+            squared_error = np.linalg.norm(Y - self.forward(X, weights=W), axis=-1)**2
+            if regularization_coef is None:
+                mse = np.mean(squared_error, axis=-1)
+                return mse
+            else:
+                mse = np.mean(squared_error, axis=-1) + regularization_coef * np.linalg.norm(W, axis=-1)
+                return mse
+
+        obj_gradient = grad(objective)
+
+        def _call_back(weights, iteration, g):
+            ''' Callbacks for each optimization step '''
+            objective_val = objective(weights, iteration)
+            self.objective_trace = np.vstack((self.objective_trace, objective_val))
+            self.weight_trace = np.vstack((self.weight_trace, weights))
+            if iteration % check_point == 0:
+                print("Iteration {} lower bound {}; gradient mag: {}".format(iteration, objective_val, np.linalg.norm(obj_gradient(weights, iteration))))
+
+    
+        # Run the training method
+        adam(obj_gradient, self.weights, step_size=step_size, num_iters=max_iteration, callback=_call_back)
+        optimum_index = np.argmin(self.objective_trace[1:])
+        self.weights = self.weight_trace[1:][optimum_index]
+
 
     def forward(self, X, weights=None):
         '''
@@ -231,11 +263,10 @@ class BNN:
         matching those of X, i.e. the typical output will be an N-by-K matrix).
         '''
         # Check X dimensions:
-        M = self.layers['input_n']  # Number of features.
         Y_shape = tuple((*X.shape[:-1], self.layers['output_n']))  # Determine shape of output.
         if len(X.shape) < 2:
             raise ValueError("X should be (at least) 2 dimensional.")
-        assert X.shape[-1]==M, f"Last dimenion of X is {X.shape[-1]} bus should correspond to {M} inputs (i.e. features)"
+        assert X.shape[-1]==self.M, f"Last dimenion of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
         
         # Get weights for each layer (as tensors):
         weights = self.weights if weights is None else weights
@@ -247,7 +278,7 @@ class BNN:
         # Loop through layers:
         #   Reminder: W_layer is an S-by-IN-by-OUT tensor of the weights for S models,
         #   with layer inputs on the rows and layer outputs on the columns.
-        for i,weights in enumerate(W_layers):
+        for i, weights in enumerate(W_layers):
             
             # If there is a bias, postpend a column of ones to each matrix:
             bias = self.layers['biases'][i]
@@ -256,8 +287,6 @@ class BNN:
                 values_in = np.append(values_in,bias_features, axis=-1)
 
             # Calculate pre-activation values:
-            # print("values_in",values_in.shape)
-            # print("weights",weights.shape)
             values_pre = np.matmul( values_in, weights )
 
             # Apply activation fucntion:
