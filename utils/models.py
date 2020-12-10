@@ -359,8 +359,8 @@ class BNN_LV(BNN):
         Eps = self.random.normal(loc=0, scale=self.sigma, size=Eps_shape)
         return Y + Eps
         
-    def forward(self, X):
+    def forward(self, X, weights=None):
         X_ = self.add_input_noise(X)
-        Y_ = super().forward(X_)
+        Y_ = super().forward(X_, weights=weights)
         Y = self.add_output_noise(Y_)
         return Y
