@@ -7,6 +7,8 @@ from autograd import scipy as sp
 from autograd import grad
 from autograd.misc.optimizers import adam
 
+import wandb
+
 
 class HMC:
     """
@@ -19,10 +21,33 @@ class HMC:
         total_samples=1000, leapfrog_steps=20, step_size=1e-1,
         burn_in=0.1, thinning_factor=1,
         mass=1.0, random_seed=None, progress=False,
+        wb_progress=False, wb_notes=None,
     ):
         """
         Perform HMC using a Euclidean-Gaussian kinetic energy.
         """
+
+        # Initialize W & B logging (optional):
+        self.wb_progress = wb_progress
+        if self.wb_progress is not False:
+            # Create a dictionary of hyperparameters:
+            config = {
+                'total_samples' : total_samples,
+                'leapfrog_steps' : leapfrog_steps,
+                'step_size' : step_size,
+                'burn_in' : burn_in,
+                'thinning_factor' : thinning_factor,
+                'mass' : mass,
+                'random_seed' : random_seed,
+            }
+            # Initialize a W&B run:
+            wandb.init(
+                project = 'am207',
+                name = 'hmc',
+                save_code = False,
+                config = config,  # Hyperparameters to archive with the run.
+                notes = wb_notes,  # Short note describing the run.
+            )
         
         # Check parameters:
         assert thinning_factor==int(thinning_factor), "thinning_factor must be integer."
@@ -234,17 +259,24 @@ class HMC:
 
             # For debugging:
             if not ( np.all(np.isfinite(p_prop)) and np.all(np.isfinite(q_prop)) ):
-                print("ERROR: Encountered nan or inf values (iteration {:,}).".format(i))
-                print("    q_curr :",q_curr)
-                print("    p_curr :",p_curr)
-                print("    U_curr :",U_curr)
-                print("    K_curr :",K_curr)
-                print("    q_prop :",q_prop)
-                print("    p_prop :",p_prop)
-                print("    U_prop :",U_prop)
-                print("    K_prop :",K_prop)
+                error_msg = f"ERROR: Encountered nan or inf values (iteration {i:,})."
+                error_msg += f"\n    q_curr : {q_curr}"
+                error_msg += f"\n    p_curr : {p_curr}"
+                error_msg += f"\n    U_curr : {U_curr}"
+                error_msg += f"\n    K_curr : {K_curr}"
+                error_msg += f"\n    q_prop : {q_prop}"
+                error_msg += f"\n    p_prop : {p_prop}"
+                error_msg += f"\n    U_prop : {U_prop}"
+                error_msg += f"\n    K_prop : {K_prop}"
+                print(error_msg)
                 # print("    hist_q_prop :",np.array(hist_q_prop))
                 # print("    hist_p_prop :",np.array(hist_p_prop))
+                if self.wb_progress:
+                    wandb.alert(
+                        title = "HMC failure",
+                        level = wandb.AlertLevel.ERROR,
+                        text = error_msg,
+                    )
                 break
             
             if progress and (i % progress == 0):
@@ -261,6 +293,26 @@ class HMC:
                     len(raw_samples),
                     100 * (n_accepted)/(n_accepted+n_rejected)
                 ))
+            if self.wb_progress and (i % self.wb_progress == 0):
+                # Upload performance metrics:
+                wandb.log({
+                    'n_accepted' : n_accepted,
+                    'n_rejected' : n_rejected,
+                    'acceptance_rate' : n_accepted/(n_accepted+n_rejected),
+                }, step=i)
+                # Save samples/state (in the W&B directory created for this run) and upload them:
+                filepath = os.path.join(wandb.run.dir, "hmc_state.json")
+                try:
+                    self.save_state(filepath, replace=True)  # Saves a json file locally.
+                    wandb.save(filepath, base_path=wandb.run.dir)  # Uploads the file to W&B.
+                except:
+                    print(f"Failed to save {filepath}.")
+
+        if self.wb_progress:
+            try:
+                wandb.run.finish()
+            except:
+                print("W & B run already ended. (Should only happen if .sample() is called more than once.)")
                 
         # Remove burn-in (by negative indexing) and perform thinning (by list slicing):
         thinning_factor = int(self.thinning_factor)

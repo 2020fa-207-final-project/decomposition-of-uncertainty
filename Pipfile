@@ -15,6 +15,7 @@ numpy = "*"
 autograd = "*"
 matplotlib = "*"
 scipy = "*"
+wandb = "*"
 
 [requires]
 python_version = "3.7"
