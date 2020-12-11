@@ -39,3 +39,6 @@ venv.bak/
 
 # Pycharm
 .idea/
+
+# Weights & Biases log folders:
+**/wandb
