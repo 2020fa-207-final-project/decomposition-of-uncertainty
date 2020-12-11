@@ -76,4 +76,4 @@ def generate_regression_outputs(type='hsc', N=None, X=None):
     else:
         raise ValueError("Error: type must be one of 'hsc' or 'bimodal'")
 
-    return (Y,X)
+    return (Y.reshape(-1,1), X.reshape(-1,1))
