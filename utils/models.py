@@ -1,3 +1,47 @@
+"""
+Implementations of Bayesian models.
+
+For neural networks, we describe the dimensions
+with the following conventions, unless otherwise noted:
+
+- The input X is generally a dataset with N rows and M features.
+  In some cases, we may have a "stack" of R datasets
+  (i.e. X may be a R-by-N-by-M tensor instead of the usual N-by-M matrix)
+  but this case is not supported by our initial implementations.
+
+- The output Y is generally an N-by-K matrix (for a K-output model)
+  but may also be R-by-N-by-K, analogously with the input X.
+
+- The weights W of a single neural network are stored
+  as a 1-by-D matrix (for a network with D weights).
+  When representing the weights of a set of S models
+  (e.g. mutiple samples from a posterior), the weights
+  may be stored in an S-by-D matrix. (Additionally,
+  our implementation has an internal representation
+  that uses a list of weights for each layer, but
+  that version need not be exposed to the user.)
+
+- In a latent variable model, the X and Y inputs follow the same
+  conventions as above, but L latent features of Gaussian noise
+  are appeneded to the input X to form an augmented input X'.
+  Typically there is a single latent variable (i.e. L=1),
+  but we have made our implementation flexible so that we can
+  exeperiment with multiple latent variables.
+  Additionally, Gaussian noise is added to each of the output Y
+  (potentially with a different variance for each of the K outputs),
+  to form a pertured output Y'.
+
+In summary:
+- R: number of "stacked" datasets for X and Y (and X' and Y').
+- N: number of data points in X and Y (and X' and Y').
+- M: number of features in X.
+- K: number of outputs in Y.
+- S: number of different models in W.
+- D: number of weights in each model.
+- L: number of latent noise inputs.
+"""
+
+
 from autograd import numpy as np
 from autograd import grad
 from autograd.misc.optimizers import adam
@@ -251,7 +295,7 @@ class BNN:
         adam(obj_gradient, self.weights, step_size=step_size, num_iters=max_iteration, callback=_call_back)
         optimum_index = np.argmin(self.objective_trace[1:])
         self.weights = self.weight_trace[1:][optimum_index]
-
+        return
 
     def forward(self, X, weights=None):
         '''
@@ -313,54 +357,116 @@ class BNN_LV(BNN):
 
     def __init__(self, architecture, seed = None, weights = None):
         """
-        Uses the same architecture as the BNN superclass,
-        but expects additional keys:
-            gamma : standard deviation of the input noise (inserted as a feature).
-            sigma : list of standard deviations of the output noise
-                (added in each dimension of the output).
-                Expects a list, where each column corresponds to a dimension of Y.
+        Initialize a BNN with Latent Variable:
+            Given an input X with N rows and M features,
+            augment X by appeend L gaussian noise features (forming a modfied input X')
+            and perturb Y by adding gaussian noise (forming a modified output Y').
+            All noise has mean zero, and the standard devation is a hyperparameter:
+            Each of the L latent variable inputs has its own standard deviation (gamma)
+            and the noise on each of the K outputs has its own standard deviation (sigma).
+
+        Uses the same architecture as the BNN superclass, but expects additional keys:
+            gamma : list of L standard deviations for the latent variable inputs.
+            sigma : list of K standard deviations for the additive output noises.
         """
         # Add a noise input.
         architecture = architecture.copy()
-        architecture['input_n'] += 1
+        assert 'input_n' in architecture.keys()  # Will be augmented by L below.
         # Get standard deviation of noise:
         if 'gamma' not in architecture:
-            raise KeyError("Make sure achitecture includes gamma (standard deviation of the input noise).")
-        self.gamma = architecture['gamma']  # Scalar.
+            raise KeyError("Make sure achitecture includes 'gamma' (list of standard deviations for the L latent variable inputs).")
+        self.gamma = architecture['gamma']  # List.
         if 'sigma' not in architecture:
-            raise KeyError("Make sure achitecture includes sigma (list of standard deviations of the output noise).")
+            raise KeyError("Make sure achitecture includes 'sigma' (list of standard deviations for the K additive output noises).")
         self.sigma = architecture['sigma']  # List.
         # Check dimensions:
-        try:
-            self.gamma = float(self.gamma)
-        except:
-            raise ValueError("The standard deviation of the latent noise feature should be a scalar.")
-        self.sigma = np.array([self.sigma]).flatten()  # Coerce to array.
+        self.gamma = np.array([self.gamma]).flatten()  # Coerce list to numpy array.
+        self.sigma = np.array([self.sigma]).flatten()  # Coerce list to numpy array.
         if len(self.sigma) != architecture['output_n']:
-            raise ValueError(f"The standard deviation of the output noise ({len(self.sigma)}) should match the dimension of the output ({architecture['output_n']}).")
+            raise ValueError(f"The dimension of 'sigma' ({len(self.sigma)}) should match the dimension of the output ({architecture['output_n']}).")
+        # Adjust input size by number of latent variables:
+        self.L = len(self.gamma)
+        architecture['input_n'] += self.L
         # Build a neural_network:
         super().__init__(architecture, seed=seed, weights=weights)
+        # Keep track of latest noise variables:
+        self.last_input_noise = None
+        self.last_output_noise = None
     
-    def add_input_noise(self,X):
+    def add_input_noise(self,X, input_noise='auto'):
         """
         Add a feature of input noise drawn from a Gaussian distribution
         with mean 0 and the standard deviation.
+        X:
+            The input to augment with latent features.
+        input_noise:
+            'auto' : Stochasticify is added automatically according to the BNN_LV's parameters.
+            'zero' : No noise is added (i.e. adds columns of zeros instead of noise features).
+            [tensor-like object] : Adds user-specified noise.
         """
-        Z_shape = tuple((*X.shape[:-1],1))
-        Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
-        return np.append(X,Z, axis=-1)
+        Z_shape = tuple((*X.shape[:-1],self.L))
+        if input_noise=='auto':
+            Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
+        elif input_noise=='zero':
+            Z = np.zeros(Z_shape)
+        else:
+            try:
+                Z = input_noise
+                assert Z.shape == Z_shape
+            except:
+                raise ValueError(f"Expected an tensor-like object with shape {Z_shape} .")
+        self.last_input_noise = Z  # Store last noise for access during training.
+        X_ = np.append(X,Z, axis=-1)
+        return X_
     
-    def add_output_noise(self,Y):
+    def add_output_noise(self,Y_, output_noise='auto'):
         """
         Corrupt output with additive noise drawn from a Gaussian distribution
         with mean 0 and a standard deviation specified for each dimension of the output.
+        Y_:
+            The output to perturb with additive noise.
+        output_noise:
+            'auto' : Stochasticify is added automatically according to the BNN_LV's parameters.
+            'zero' : No noise is added (i.e. leaves the output unchanged).
+            [tensor-like object] : Adds user-specified noise.
         """
-        Eps_shape = Y.shape
-        Eps = self.random.normal(loc=0, scale=self.sigma, size=Eps_shape)
-        return Y + Eps
-        
-    def forward(self, X, weights=None):
-        X_ = self.add_input_noise(X)
-        Y_ = super().forward(X_, weights=weights)
-        Y = self.add_output_noise(Y_)
+        Eps_shape = Y_.shape
+        if output_noise=='auto':
+            Eps = self.random.normal(loc=0, scale=self.sigma, size=Eps_shape)
+        elif output_noise=='zero':
+            Eps = np.zeros(Eps_shape)
+        else:
+            try:
+                Eps = output_noise
+                assert Eps.shape == Eps_shape
+            except:
+                raise ValueError(f"Expected an tensor-like object with shape {Eps_shape} .")
+        self.last_output_noise = Eps  # Store last noise for access during training.
+        Y = Y_ + Eps
         return Y
+        
+    def forward(self, X, weights=None, input_noise='auto', output_noise='auto'):
+        """
+        Perform a forward pass. Noise is added automatically unless specified by the user.
+        input_noise:
+            Parameter passed to `add_input_noise` (see that function for details).
+        output_noise:
+            Parameter passed to `add_output_noise` (see that function for details).
+        """
+        # Add input noise (extra feature):
+        X_ = self.add_input_noise(X, input_noise=input_noise)
+        # Perform forward pass through regular BNN:
+        Y_ = super().forward(X_, weights=weights)
+        # Add output noise (additive):
+        Y = self.add_output_noise(Y_, output_noise=output_noise)
+        return Y
+
+    def fit(self, X, Y, *args, **wkargs):
+        """
+        Fit the non-noisy verion of the neural net using gradient descent.
+        (This is a non-bayesian approach, but useful for finding initialization weights).
+        """
+        # Prepare X and Y:
+        X_ = self.add_input_noise(X, input_noise='zero')
+        Y_ = self.add_output_noise(Y, output_noise='zero')
+        return super().fit(X=X_, Y=Y_, *args, **wkargs)
