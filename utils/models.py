@@ -455,13 +455,14 @@ class BNN_LV(BNN):
         """
         # Add input noise (extra feature):
         X_ = self.add_input_noise(X, input_noise=input_noise)
+
         # Perform forward pass through regular BNN:
         Y_ = super().forward(X_, weights=weights)
         # Add output noise (additive):
         Y = self.add_output_noise(Y_, output_noise=output_noise)
         return Y
 
-    def fit(self, X, Y, *args, **wkargs):
+    def fit(self, X, Y, *args, **kwargs):
         """
         Fit the non-noisy verion of the neural net using gradient descent.
         (This is a non-bayesian approach, but useful for finding initialization weights).
@@ -469,4 +470,4 @@ class BNN_LV(BNN):
         # Prepare X and Y:
         X_ = self.add_input_noise(X, input_noise='zero')
         Y_ = self.add_output_noise(Y, output_noise='zero')
-        return super().fit(X=X_, Y=Y_, *args, **wkargs)
+        return super().fit(X=X_, Y=Y_, *args, **kwargs)
