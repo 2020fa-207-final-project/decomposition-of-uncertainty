@@ -61,6 +61,8 @@ class HMC:
                 (If blank, uses the folder wandb creates for this run;
                 the default is a good choice, but does not seem to work on DeepNote.)
             filename: Name of the file the HMC samples/state are dumped to (default: "hmc_state.json").
+            archive: A static dictionary of params/values to archive (e.g. info about the priors).
+                (These are logged as hyperparameters addition to the HMC intialization parameters).
         """
 
         # Initialize W & B logging (optional):
@@ -68,7 +70,8 @@ class HMC:
         self.wb_progress = None if (not self.wb_settings) or ('progress' not in wb_settings) else wb_settings['progress']
         if self.wb_settings is not False:
             # Create a dictionary of hyperparameters:
-            archive = {
+            archive = dict() if 'archive' not in wb_settings else wb_settings['archive']
+            config = archive.update({
                 'total_samples' : total_samples,
                 'leapfrog_steps' : leapfrog_steps,
                 'step_size' : step_size,
@@ -76,7 +79,7 @@ class HMC:
                 'thinning_factor' : thinning_factor,
                 'mass' : mass,
                 'random_seed' : random_seed,
-            }
+            })
             # Define helper function:
             def get_wb_setting(key, default):
                 if key in wb_settings.keys():
@@ -90,7 +93,7 @@ class HMC:
                 name      = get_wb_setting(key='name', default='hmc'),
                 save_code = get_wb_setting(key='save_code', default=False),
                 notes     = get_wb_setting(key='notes', default=None),
-                config    = archive,  # Dictionary of the hyperparameters.
+                config    = config,  # Dictionary of the hyperparameters.
             )
         
         # Check parameters:
