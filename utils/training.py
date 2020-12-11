@@ -107,6 +107,7 @@ class HMC:
         
         # Calculate number of samples for given burn-in and thinning:
         iters = HMC.calc_iters(total_samples=total_samples, burn_in=burn_in, thinning_factor=thinning_factor)
+        self.burn_num = iters - (total_samples*thinning_factor)
         
         # Store parameters:
         self.log_target_func = log_target_func
@@ -161,10 +162,25 @@ class HMC:
         Compute how many iterations are needed to acheive `total_samples`
         after removing burn-in and performinng thinning.
         """
-        assert (burn_in>=0) and (burn_in<1), "burn_in must be a proportion."
+        assert (burn_in>=0) and (burn_in<1), "burn_in must be a proportion (less than 1)."
         assert isinstance(thinning_factor, int) and thinning_factor>0, "thinning_factor must be a positive integer."
         iters = int(np.ceil(total_samples/(1.0-burn_in)*thinning_factor))
         return iters
+
+    def burn_thin(self):
+        """
+        Remove burn-in (by negative indexing) and perform thinning (by list slicing).
+        Takes builds `.samples` from `.raw_samples`.
+        """
+        # Preserve types:
+        if isinstance(self.raw_samples, list):
+            self.samples = self.raw_samples[self.burn_num::self.thinning_factor]
+        else:
+            # 3D numpy array:
+            raw_samples = self.raw_samples.tolist()
+            samples = raw_samples[self.burn_num::self.thinning_factor]
+            self.samples = np.array(samples)
+        
         
     def kinetic_func(self, p):
         """
@@ -248,11 +264,6 @@ class HMC:
         
         # Start timer:
         time_start = time.time()
-
-        # Build list to collect samples:
-        raw_samples = []
-        n_accepted = 0
-        n_rejected = 0
         
         # Iterate for specified number of samples:
         q_curr = position_init
@@ -260,7 +271,7 @@ class HMC:
         for i in range(1,1+iters):
             
             # Sample a random momentum:
-            #q_curr = raw_samples[-1]
+            #q_curr = self.raw_samples[-1]
             p_curr = self.momentum_sample()
             
             # Take specified number of steps:
@@ -299,10 +310,10 @@ class HMC:
             if u <= alpha:
                 q_curr = q_prop
                 U_curr = None  # Trigger recalculation.
-                n_accepted += 1
+                self.n_accepted += 1
             else:
-                n_rejected += 1
-            raw_samples.append(q_curr.copy())
+                self.n_rejected += 1
+            self.raw_samples.append(q_curr.copy())
 
             # For debugging:
             if not ( np.all(np.isfinite(p_prop)) and np.all(np.isfinite(q_prop)) ):
@@ -337,29 +348,37 @@ class HMC:
                     i,
                     iters,
                     int(time_progress),
-                    len(raw_samples),
-                    100 * (n_accepted)/(n_accepted+n_rejected)
+                    len(self.raw_samples),
+                    100 * (self.n_accepted)/(self.n_accepted+self.n_rejected)
                 ))
             if self.wb_progress and (i % self.wb_progress == 0):
+                self.burn_thin()  # (Re)build list of clean samples from raw_samples.
                 # Upload performance metrics:
                 wandb.log({
-                    'n_accepted' : n_accepted,
-                    'n_rejected' : n_rejected,
-                    'acceptance_rate' : n_accepted/(n_accepted+n_rejected),
+                    'n_samples' : len(self.samples),
+                    'n_accepted' : self.n_accepted,
+                    'n_rejected' : self.n_rejected,
+                    'acceptance_rate' : self.n_accepted/(self.n_accepted+self.n_rejected),
+                    'log_target_func' : self.log_target_func(q_curr),
+                    'kinetic_grad_mag' : np.linalg.norm(self.kinetic_grad(p_curr)),
+                    'potential_grad_mag' : np.linalg.norm(self.potential_grad(q_curr)),
+                    'H_curr' : H_curr,
+                    'U_curr' : U_curr,
+                    'K_curr' : K_curr,
                 }, step=i)
                 # Save samples/state and upload them:
                 # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
                 #       but for some reason this causes issues when running on DeepNote,
                 #       so the use can also specify some other local folder in wb_settings.
                 base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
+                # Save HMC samples/state:
                 filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
-                self.wb_base_path = base_path  # Store as a property the user can access (for debugging).
                 filepath = os.path.join(base_path, filename)
                 try:
                     self.save_state(filepath, replace=True)  # Saves a json file locally.
                     wandb.save(filepath, base_path=base_path)  # Uploads the file to W&B.
-                except:
-                    print(f"Failed to save {filepath}.")
+                except Exception as e:
+                    print(f"Failed to save {filepath} at step {i}.\n\t{e}")
 
         if self.wb_settings:
             try:
@@ -368,9 +387,8 @@ class HMC:
                 print("W & B run already ended. (Should only happen if .sample() is called more than once.)")
                 
         # Remove burn-in (by negative indexing) and perform thinning (by list slicing):
-        thinning_factor = int(self.thinning_factor)
-        raw_samples = np.vstack(raw_samples)
-        samples = raw_samples[-new_samples*thinning_factor::thinning_factor]
+        self.raw_samples = np.vstack(self.raw_samples)
+        self.burn_thin()  # (Re)builds self.samples from self.raw_samples.
         
         # Stop timer:
         time_end = time.time()
@@ -378,29 +396,15 @@ class HMC:
         if progress:
             print("Finished in {:,} seconds".format(int(seconds)))
         self.seconds += seconds  # Increment timer.
-        
-        # Add results to history:
-        self.samples.extend(samples)  # Extend lists.
-        self.raw_samples.extend(raw_samples)  # Extend lists.
-        self.n_accepted += n_accepted  # Increment counters.
-        self.n_rejected += n_rejected  # Increment counters.
-
-        # Convert histories to numpy arrays:
-        self.samples = np.vstack(self.samples)
-        self.raw_samples = np.vstack(self.raw_samples)
 
         # Return new samples:
-        return np.vstack(samples)
+        return self.samples
 
     def save_state(self, filepath, replace=False):
-        # Get raw samples (as list):
-        raw_samples = self.raw_samples
-        if not isinstance(raw_samples, list):
-            raw_samples = raw_samples.tolist()
-        # Get samples (as list):
-        samples = self.samples
-        if not isinstance(samples, list):
-            samples = samples.tolist()
+        # Get raw samples (as list of list of lists):
+        raw_samples = np.array(self.raw_samples).tolist()
+        # Get samples (as list of list of lists):
+        samples = np.array(self.samples).tolist()
         # Get random state:
         random_state = list(self.np_random.get_state())
         random_state[1] = random_state[1].tolist()
