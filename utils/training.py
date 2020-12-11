@@ -21,17 +21,54 @@ class HMC:
         total_samples=1000, leapfrog_steps=20, step_size=1e-1,
         burn_in=0.1, thinning_factor=1,
         mass=1.0, random_seed=None, progress=False,
-        wb_progress=False, wb_notes=None,
+        wb_settings=False,
     ):
         """
         Perform HMC using a Euclidean-Gaussian kinetic energy.
+        
+        log_target_func:
+
+        position_init:
+
+        total_samples, burn_in, thinning_factor:
+            Number of desired samples (after burn-in and thinning).
+            Burn-in should be a proportion between 0 and 1.
+            Thinning factor should be an integer.
+        
+        leapfrog_steps, step_size, mass:
+            Hyperparameters for the Euclidian-Gaussian HMC.
+
+        random_seed:
+            (int or None) Random seed for the sampler.
+
+        progress:
+            (False or int) How often to print progress.
+
+        wb_settings:
+            (False or dict) Settings for logging to Weights & Biases (optional).
+            entity: Username of the project host (by default, uses gpestre/am207 shared project).
+            project: Name of the project (by default, uses gpestre/am207 shared project).
+            group: Name of the group (e.g. hmc_bnn_lv) 
+            name: Short name for this particular run.
+            notes: Short note describing the tuning for this particular run.
+                (Note: The full dictionary of hyperparameters will also be uploaded.)
+            save_code: Whether or not to upload a copy of the script/notebook HMC called run from.
+                (If True, also requires allowing code uploads in the settings of your W&B account.)
+            [The options above are sent to DeepNote's init function -- see here: https://docs.wandb.com/library/init .]
+            [The options below are additional parameters for uploading samples and performance metrics to W&B .]
+            progress: Integer indicating how often to update progress (e.g. every 1000 steps).
+            base_path: Local directory where samples will be saved before W&B upload.
+                (If blank, uses the folder wandb creates for this run;
+                the default is a good choice, but does not seem to work on DeepNote.)
+            filename: Name of the file the HMC samples/state are dumped to (default: "hmc_state.json").
         """
 
         # Initialize W & B logging (optional):
-        self.wb_progress = wb_progress
-        if self.wb_progress is not False:
+        self.wb_settings = wb_settings
+        self.wb_progress = None if 'progress' not in wb_settings else wb_settings['progress']
+        if self.wb_settings is not False:
             # Create a dictionary of hyperparameters:
-            config = {
+            archive = {
                 'total_samples' : total_samples,
                 'leapfrog_steps' : leapfrog_steps,
                 'step_size' : step_size,
@@ -40,13 +77,20 @@ class HMC:
                 'mass' : mass,
                 'random_seed' : random_seed,
             }
+            # Define helper function:
+            def get_wb_setting(key, default):
+                if key in wb_settings.keys():
+                    return wb_settings[key]
+                return default
             # Initialize a W&B run:
             wandb.init(
-                project = 'am207',
-                name = 'hmc',
-                save_code = False,
-                config = config,  # Hyperparameters to archive with the run.
-                notes = wb_notes,  # Short note describing the run.
+                entity    = get_wb_setting(key='entity', default='gpestre'),
+                project   = get_wb_setting(key='project', default='am207'),
+                group     = get_wb_setting(key='group', default='hmc'),
+                name      = get_wb_setting(key='name', default='hmc'),
+                save_code = get_wb_setting(key='save_code', default=False),
+                notes     = get_wb_setting(key='notes', default=None),
+                config    = archive,  # Dictionary of the hyperparameters.
             )
         
         # Check parameters:
@@ -271,7 +315,7 @@ class HMC:
                 print(error_msg)
                 # print("    hist_q_prop :",np.array(hist_q_prop))
                 # print("    hist_p_prop :",np.array(hist_p_prop))
-                if self.wb_progress:
+                if self.wb_settings:
                     wandb.alert(
                         title = "HMC failure",
                         level = wandb.AlertLevel.ERROR,
@@ -300,15 +344,21 @@ class HMC:
                     'n_rejected' : n_rejected,
                     'acceptance_rate' : n_accepted/(n_accepted+n_rejected),
                 }, step=i)
-                # Save samples/state (in the W&B directory created for this run) and upload them:
-                filepath = os.path.join(wandb.run.dir, "hmc_state.json")
+                # Save samples/state and upload them:
+                # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
+                #       but for some reason this causes issues when running on DeepNote,
+                #       so the use can also specify some other local folder in wb_settings.
+                base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
+                filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
+                self.wb_base_path = base_path  # Store as a property the user can access (for debugging).
+                filepath = os.path.join(base_path, filename)
                 try:
                     self.save_state(filepath, replace=True)  # Saves a json file locally.
-                    wandb.save(filepath, base_path=wandb.run.dir)  # Uploads the file to W&B.
+                    wandb.save(filepath, base_path=base_path)  # Uploads the file to W&B.
                 except:
                     print(f"Failed to save {filepath}.")
 
-        if self.wb_progress:
+        if self.wb_settings:
             try:
                 wandb.run.finish()
             except:
