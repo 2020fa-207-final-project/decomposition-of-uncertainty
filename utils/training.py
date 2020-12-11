@@ -181,7 +181,6 @@ class HMC:
             samples = raw_samples[self.burn_num::self.thinning_factor]
             self.samples = np.array(samples)
         
-        
     def kinetic_func(self, p):
         """
         Calculate the Euclidean-Guassian kinetic energy of
@@ -352,7 +351,6 @@ class HMC:
                     100 * (self.n_accepted)/(self.n_accepted+self.n_rejected)
                 ))
             if self.wb_progress and (i % self.wb_progress == 0):
-                self.burn_thin()  # (Re)build list of clean samples from raw_samples.
                 # Upload performance metrics:
                 wandb.log({
                     'n_samples' : len(self.samples),
@@ -401,6 +399,8 @@ class HMC:
         return self.samples
 
     def save_state(self, filepath, replace=False):
+        # (Re)build list of clean samples from raw_samples:
+        self.burn_thin()
         # Get raw samples (as list of list of lists):
         raw_samples = np.array(self.raw_samples).tolist()
         # Get samples (as list of list of lists):
