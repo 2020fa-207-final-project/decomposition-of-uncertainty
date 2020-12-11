@@ -54,9 +54,13 @@ class HMC:
                 (Note: The full dictionary of hyperparameters will also be uploaded.)
             save_code: Whether or not to upload a copy of the script/notebook HMC called run from.
                 (If True, also requires allowing code uploads in the settings of your W&B account.)
+            [The options above are sent to DeepNote's init function -- see here: https://docs.wandb.com/library/init .]
+            [The options below are additional parameters for uploading samples and performance metrics to W&B .]
             progress: Integer indicating how often to update progress (e.g. every 1000 steps).
-            
-            See https://docs.wandb.com/library/init for more details.
+            base_path: Local directory where samples will be saved before W&B upload.
+                (If blank, uses the folder wandb creates for this run;
+                the default is a good choice, but does not seem to work on DeepNote.)
+            filename: Name of the file the HMC samples/state are dumped to (default: "hmc_state.json").
         """
 
         # Initialize W & B logging (optional):
@@ -340,11 +344,17 @@ class HMC:
                     'n_rejected' : n_rejected,
                     'acceptance_rate' : n_accepted/(n_accepted+n_rejected),
                 }, step=i)
-                # Save samples/state (in the W&B directory created for this run) and upload them:
-                filepath = os.path.join(wandb.run.dir, "hmc_state.json")
+                # Save samples/state and upload them:
+                # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
+                #       but for some reason this causes issues when running on DeepNote,
+                #       so the use can also specify some other local folder in wb_settings.
+                base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
+                filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
+                self.wb_base_path = base_path  # Store as a property the user can access (for debugging).
+                filepath = os.path.join(base_path, filename)
                 try:
                     self.save_state(filepath, replace=True)  # Saves a json file locally.
-                    wandb.save(filepath, base_path=wandb.run.dir)  # Uploads the file to W&B.
+                    wandb.save(filepath, base_path=base_path)  # Uploads the file to W&B.
                 except:
                     print(f"Failed to save {filepath}.")
 
