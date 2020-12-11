@@ -55,13 +55,16 @@ class HMC:
             save_code: Whether or not to upload a copy of the script/notebook HMC called run from.
                 (If True, also requires allowing code uploads in the settings of your W&B account.)
             progress: Integer indicating how often to update progress (e.g. every 1000 steps).
+            save_dir: Local directory where samples will be saved before W&B upload.
+                (If blank, uses the folder wandb creates for this run;
+                the default is a good choice, but does not seem to work on DeepNote.)
             
             See https://docs.wandb.com/library/init for more details.
         """
 
         # Initialize W & B logging (optional):
         self.wb_settings = wb_settings
-        self.wb_progress = None if 'progress' not in wb_settings else wb_settings['progress']
+        self.wb_progress = None if (not self.wb_settings) or ('progress' not in wb_settings) else wb_settings['progress']
         if self.wb_settings is not False:
             # Create a dictionary of hyperparameters:
             archive = {
