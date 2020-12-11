@@ -63,6 +63,9 @@ class HMC:
             filename: Name of the file the HMC samples/state are dumped to (default: "hmc_state.json").
             archive: A static dictionary of params/values to archive (e.g. info about the priors).
                 (These are logged as hyperparameters addition to the HMC intialization parameters).
+            callback: A callback function that is run at every wandb checkpoint (e.g. for drawing plots).
+                The function expects the HMC instance as its only parameter.
+                (Note that it can access the `.base_path` property.)
         """
 
         # Initialize W & B logging (optional):
@@ -95,6 +98,16 @@ class HMC:
                 notes     = get_wb_setting(key='notes', default=None),
                 config    = config,  # Dictionary of the hyperparameters.
             )
+            # Define filename and directory for saving samples/state:
+            # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
+            #       but for some reason this causes issues when running on DeepNote,
+            #       so the use can also specify some other local folder in wb_settings.
+            self.wb_base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
+            # Save HMC samples/state:
+            self.wb_filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
+            self.wb_filepath = os.path.join(self.wb_base_path, self.wb_filename)
+            # Bind the save function to the instance, for use in callback (e.g. for plotting progress):
+            self.wb_save = wandb.save
         
         # Check parameters:
         assert thinning_factor==int(thinning_factor), "thinning_factor must be integer."
@@ -365,20 +378,20 @@ class HMC:
                     'K_curr' : K_curr,
                 }, step=i)
                 # Save samples/state and upload them:
-                # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
-                #       but for some reason this causes issues when running on DeepNote,
-                #       so the use can also specify some other local folder in wb_settings.
-                base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
-                # Save HMC samples/state:
-                filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
-                filepath = os.path.join(base_path, filename)
                 try:
-                    self.save_state(filepath, replace=True)  # Saves a json file locally.
-                    wandb.save(filepath, base_path=base_path)  # Uploads the file to W&B.
+                    self.save_state(self.wb_filepath, replace=True)  # Saves a json file locally.
+                    wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
                 except Exception as e:
-                    print(f"Failed to save {filepath} at step {i}.\n\t{e}")
+                    print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
 
         if self.wb_settings:
+            # Save final state:
+            try:
+                self.save_state(self.wb_filepath, replace=True)  # Saves a json file locally.
+                wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
+            except Exception as e:
+                print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
+            # Finish run:
             try:
                 wandb.run.finish()
             except:
