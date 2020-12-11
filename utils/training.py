@@ -65,7 +65,7 @@ class HMC:
 
         # Initialize W & B logging (optional):
         self.wb_settings = wb_settings
-        self.wb_progress = None if 'progress' not in wb_settings else wb_settings['progress']
+        self.wb_progress = None if (not self.wb_settings) or ('progress' not in wb_settings) else wb_settings['progress']
         if self.wb_settings is not False:
             # Create a dictionary of hyperparameters:
             archive = {
