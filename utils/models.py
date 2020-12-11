@@ -266,9 +266,21 @@ class BNN:
         '''
 
         '''
+        # Check X dimensions:
         if len(X.shape) < 2:
-            raise ValueError("X should be (at least) 2 dimensional.")
-        assert X.shape[-1]==self.M, f"Last dimension of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
+            raise ValueError(f"X should be (at least) 2 dimensional; X.shape={X.shape}.")
+        assert X.shape[-1]==self.M, f"Last dimenion of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
+        # Check Y dimensions:
+        if len(Y.shape) < 2:
+            raise ValueError(f"Y should be (at least) 2 dimensional; Y.shape={Y.shape}.")
+        assert Y.shape[-1]==self.K, f"Last dimenion of Y is {Y.shape[-1]} but should correspond to {self.K} output"
+        # Get number of "stacks" of datasets (i.e. the arbitrary dimensions before N and M,K):
+        assert X.shape[:-1] ==  Y.shape[:-1], f"Besides the final dimension (M,K), the dimensions of X {X.shape} and Y {Y.shape} should match."
+        N = X.shape[-2]  # Number of rows.
+        R = X.shape[:-2]  # Arbitrary dimensions that precede the number of rows (N) and features (M).
+        # Raise implementation error if there is more than a single 2D dataset:
+        if len(R)>0:
+            raise NotImplementedError(f"Current implementation does not support datasets of aritrary dimension, must be N-by-M; X.shape={X.shape}.")
         
         def objective(W, t):
             ''' Callbacks for each optimization step '''
@@ -294,7 +306,7 @@ class BNN:
         # Run the training method
         adam(obj_gradient, self.weights, step_size=step_size, num_iters=max_iteration, callback=_call_back)
         optimum_index = np.argmin(self.objective_trace[1:])
-        self.weights = self.weight_trace[1:][optimum_index]
+        self.weights = self.weight_trace[1:][optimum_index].reshape(1,-1)
         return
 
     def forward(self, X, weights=None):
@@ -307,14 +319,23 @@ class BNN:
         matching those of X, i.e. the typical output will be an N-by-K matrix).
         '''
         # Check X dimensions:
-        Y_shape = tuple((*X.shape[:-1], self.layers['output_n']))  # Determine shape of output.
         if len(X.shape) < 2:
-            raise ValueError("X should be (at least) 2 dimensional.")
+            raise ValueError(f"X should be (at least) 2 dimensional; X.shape={X.shape}.")
+        M = X.shape[-1]  # Number of features (final dimension).
+        N = X.shape[-2]  # Number of rows (dimension before last).
+        R = X.shape[:-2]  # Arbitrary dimensions that precede the number of rows (N) and features (M).
         assert X.shape[-1]==self.M, f"Last dimenion of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
+        # Raise implementation error if there is more than a single 2D dataset:
+        if len(R)>0:
+            raise NotImplementedError(f"Current implementation does not support datasets of aritrary dimension, must be N-by-M; X.shape={X.shape}.")
         
         # Get weights for each layer (as tensors):
         weights = self.weights if weights is None else weights
         W_layers = self.unstack_weights(W=weights)
+
+        # Determine shape of output:
+        S = weights.shape[0]  # Number of different models represented.
+        Y_shape = tuple([ S, *X.shape[:-1], self.layers['output_n'] ])  # Determine shape of output.
 
         # Copy data to values to iterate through the network
         values_in = X.copy()
@@ -345,6 +366,12 @@ class BNN:
             values_in = values_out
 
         Y = values_out.reshape(Y_shape)
+
+        # Special case: If input was 2D and there is only one set of weights
+        # return a 2D output instead of 3D output with a first dimension of 1:
+        if (S==1) and (len(Y.shape)==3) and (Y.shape[0]==1):
+            S,N,K = Y.shape
+            Y = Y.reshape(N,K)  # Drop the first dimension where S=1.
         
         return Y
 
