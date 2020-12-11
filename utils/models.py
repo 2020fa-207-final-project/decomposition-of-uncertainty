@@ -392,6 +392,8 @@ class BNN_LV(BNN):
         # Keep track of latest noise variables:
         self.last_input_noise = None
         self.last_output_noise = None
+        # Store addition state variables:
+        self.fitting = False  # Flag for handing recursive calls to `fit` (generally False).
     
     def add_input_noise(self,X, input_noise='auto'):
         """
@@ -454,14 +456,28 @@ class BNN_LV(BNN):
             Parameter passed to `add_output_noise` (see that function for details).
         """
         # Add input noise (extra feature):
-        X_ = self.add_input_noise(X, input_noise=input_noise)
+        # Note: During gradient descent (i.e. when `fitting` flag is True),
+        #       this step is skipped because noise was already added by `fit` method.
+        if not self.fitting:
+            X_ = self.add_input_noise(X, input_noise=input_noise)
+        else:
+            # During gradient descent (i.e. when `fitting` flag is True),
+            # don't augment X because that was already handled by `fit` method.
+            X_ = X
+
         # Perform forward pass through regular BNN:
         Y_ = super().forward(X_, weights=weights)
+
         # Add output noise (additive):
-        Y = self.add_output_noise(Y_, output_noise=output_noise)
+        if not self.fitting:
+            Y = self.add_output_noise(Y_, output_noise=output_noise)
+        else:
+            # During gradient descent (i.e. when `fitting` flag is True),
+            # don't augment Y because that was already handled by `fit` method.
+            Y = Y_
         return Y
 
-    def fit(self, X, Y, *args, **wkargs):
+    def fit(self, X, Y, *args, **kwargs):
         """
         Fit the non-noisy verion of the neural net using gradient descent.
         (This is a non-bayesian approach, but useful for finding initialization weights).
@@ -469,4 +485,8 @@ class BNN_LV(BNN):
         # Prepare X and Y:
         X_ = self.add_input_noise(X, input_noise='zero')
         Y_ = self.add_output_noise(Y, output_noise='zero')
-        return super().fit(X=X_, Y=Y_, *args, **wkargs)
+
+        self.fitting = True  # Put BNN LV in fit mode so that it stops adding columns to X.
+        super().fit(X=X_, Y=Y_, *args, **kwargs)
+        self.fitting = False  # Restore normal state.
+        return
