@@ -70,8 +70,8 @@ class HMC:
         self.wb_progress = None if (not self.wb_settings) or ('progress' not in wb_settings) else wb_settings['progress']
         if self.wb_settings is not False:
             # Create a dictionary of hyperparameters:
-            archive = dict() if 'archive' not in wb_settings else wb_settings['archive']
-            config = archive.update({
+            config = dict() if 'archive' not in wb_settings else wb_settings['archive']
+            config.update({
                 'total_samples' : total_samples,
                 'leapfrog_steps' : leapfrog_steps,
                 'step_size' : step_size,
