@@ -2,6 +2,8 @@ import json
 import os
 import time
 
+from PIL import Image
+
 from autograd import numpy as np
 from autograd import scipy as sp
 from autograd import grad
@@ -106,8 +108,8 @@ class HMC:
             # Save HMC samples/state:
             self.wb_filename = "hmc_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
             self.wb_filepath = os.path.join(self.wb_base_path, self.wb_filename)
-            # Bind the save function to the instance, for use in callback (e.g. for plotting progress):
-            self.wb_save = wandb.save
+            # Bind the W&B module to the instance, for use in callback (e.g. for plotting progress):
+            self.wandb = wandb
         
         # Check parameters:
         assert thinning_factor==int(thinning_factor), "thinning_factor must be integer."
@@ -383,6 +385,17 @@ class HMC:
                     wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
                 except Exception as e:
                     print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
+                # Callback function (for producing diagnostic plots):
+                callback = None if 'callback' not in self.wb_settings else self.wb_settings['callback']
+                if callback is not None:
+                    try:
+                        if isinstance(callback, list):
+                            for func in callback:
+                                func(self)  # Pass the HMC object to the callback function.
+                        else:
+                            callback(self)  # Pass the HMC object to the callback function.
+                    except Exception as e:
+                        print(f"Callback failed at step {i}.\n\t{e}")
 
         if self.wb_settings:
             # Save final state:
@@ -454,6 +467,58 @@ class HMC:
         random_state = tuple(random_state)
         self.np_random.set_state(random_state)
         print(f"Loaded HMC state : {filepath} .")
+
+
+def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwargs):
+    """
+    Wrap a plotting function to produce plots for logging to Weights & Biases during HMC sampling.
+    Assumes the function takes a `samples` argument (S by D array) and returns pyplot axes.
+    The rest of the keyword arguments are passed directly to the plotting function.
+    """
+    assert 'samples' not in kwargs, "No need to provide `samples`, as they will we extract from current HMC state."
+    def callback(hmc):
+        filepath = os.path.join(hmc.wb_base_path, filename+'.png')
+        hmc.burn_thin()  # Build samples from raw_samples.
+        if len(hmc.samples)>0:
+            samples = np.vstack(hmc.samples)  # Get samples.
+            kwargs['samples'] = samples  # Add samples to keyword arguments.
+            ax = plot_func(**kwargs)  # Call plotting function.
+            ax.figure.savefig(filepath)  # Save plot locally.
+            hmc.wandb.save(filepath, base_path=hmc.wb_base_path)  # Upload plot file to W&B.
+            img = Image.open(filepath)  # Load image as array.
+            hmc.wandb.log({filename:[hmc.wandb.Image(img, caption=filename)]})
+            print(f"Callback: Saved plot {filepath} ({samples.shape[0]} samples).")
+        else:
+            print(f"Callback: No samples to plot.")
+    return callback
+
+
+def build_wb_callback_postpred(model, x_data):
+    """
+    Build a callback function that produces a scatterplot of the posterior predictive
+    for Weights and Biases.
+    model:
+        A model with a `.forward(X, weights)` method.
+    x_data:
+        The X values to plot (vector of length N; or )
+    """
+    x_data = np.array(x_data).flatten().reshape(-1,1)
+    def wb_post_pred(hmc):
+        hmc.burn_thin()  # Build samples from raw_samples.
+        if len(hmc.samples)>0:
+            samples = np.vstack(hmc.samples)  # Get samples.
+            S = samples.shape[0]  # Get number of models.
+            y_pred = model.forward(x_data, samples)
+            x_vals = np.tile(x_data, reps=(S,1,1))
+            assert y_pred.shape == x_vals.shape
+            # Build W&B table and plot:
+            data = [[x, y] for (x, y) in zip(x_vals.flatten(), y_pred.flatten())]
+            table = hmc.wandb.Table(data=data, columns = ["class_x", "class_y"])
+            hmc.wandb.log({"posterior_predictic" : hmc.wandb.plot.scatter(table, "class_x", "class_y")})
+            print(f"Callback: Built plot with {samples.shape[0]} samples.")
+        else:
+            print(f"Callback: No samples to plot.")
+    return wb_post_pred
     
 
 class BBVI:
