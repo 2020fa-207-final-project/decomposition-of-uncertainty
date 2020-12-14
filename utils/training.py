@@ -553,7 +553,7 @@ class BBVI:
 
         mode :
             The type of neural net (determines which ELBO is used).
-            Options are: 'BNN', 'BNNLV'.
+            Options are: 'BNN', 'BNN_LV'.
         
         num_samples :
             Number of noise samples taken during the reparameterization step.
@@ -572,8 +572,9 @@ class BBVI:
         """
 
         # Check mode:
-        mode = mode.replace('+','').upper()
-        assert mode in {'BNN','BNNLV'}
+        valid_modes = {'BNN','BNN_LV'}
+        mode = mode.replace('+','_').upper()
+        assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
 
         # Check dimensions of Mu:
         try:
@@ -724,7 +725,7 @@ class BBVI:
             gaussian_entropy_term = self.gaussian_entropy(logStDev)
             elbo_approx = posterior_term + gaussian_entropy_term
             return -elbo_approx
-        elif self.mode=='BNNLV':
+        elif self.mode=='BNN_LV':
             raise NotImplementedError("To do.")
         else:
             raise NotImplementedError("Invalid mode: {}".format(self.mode))
