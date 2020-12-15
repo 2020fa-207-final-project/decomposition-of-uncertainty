@@ -585,9 +585,6 @@ class BBVI:
         mode = mode.replace('+','_').upper()
         assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
 
-        # Get initial parameters for W:
-        if (self.mode=='BNN') or (self.mode=='BNN_LV'):
-
         try:
             if len(Mu_init.shape)==1:
                 Mu_init = Mu_init.reshape(1,-1)
