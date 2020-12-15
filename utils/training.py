@@ -534,6 +534,7 @@ class BBVI:
 
     def __init__(self,
         log_target_func, Mu_init, Sigma_init, mode='BNN',
+        Mu_init_Z=None, Sigma_init_Z=None,
         num_samples=1_000, step_size=0.1, num_iters=1_000,
         random_seed=None, progress=False,
     ):
@@ -544,22 +545,30 @@ class BBVI:
             The function that is being approximated.
         
         Mu_init :
-            Initialization value for the mean of the variational distribution.
+            Initialization value for the mean of the variational distribution of W.
             Expects Mu as a length-D vector or 1-by-D matrix.
         
         Sigma_init :
-            Initialization value for the covariance of the variational distribution.
+            Initialization value for the covariance of the variational distribution of Z.
             Expects Sigma as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
+        
+        Mu_init_Z :
+            Initialization value for the mean of the variational distribution of W.
+            Expects Mu_Z as a length-D vector or 1-by-D matrix.
+        
+        Sigma_init_Z :
+            Initialization value for the covariance of the variational distribution of Z.
+            Expects Sigma_Z as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
 
         mode :
             The type of neural net (determines which ELBO is used).
-            Options are: 'BNN', 'BNNLV'.
+            Options are: 'BNN', 'BNN_LV'.
         
         num_samples :
             Number of noise samples taken during the reparameterization step.
         
         step_size :
-            Step size for graident descent.
+            Step size for gradient descent.
         
         num_iters :
             Number of steps of gradient desecent.
@@ -572,10 +581,13 @@ class BBVI:
         """
 
         # Check mode:
-        mode = mode.replace('+','').upper()
-        assert mode in {'BNN','BNNLV'}
+        valid_modes = {'BNN','BNN_LV'}
+        mode = mode.replace('+','_').upper()
+        assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
 
-        # Check dimensions of Mu:
+        # Get initial parameters for W:
+        if (self.mode=='BNN') or (self.mode=='BNN_LV'):
+
         try:
             if len(Mu_init.shape)==1:
                 Mu_init = Mu_init.reshape(1,-1)
@@ -604,6 +616,43 @@ class BBVI:
         dims = Mu_init.shape[1]
         # Convert covariance to log standard deviation:
         logStDev_init = 0.5*np.log(Sigma_init)
+        
+        if self.mode=='BNN_LV':
+
+            # Check dimensions of Mu:
+            try:
+                if len(Mu_init_Z.shape)==1:
+                    Mu_init_Z = Mu_init_Z.reshape(1,-1)
+                elif len(Mu_init_Z.shape)==2 and Mu_init_Z.shape[0]==1:
+                    pass
+                else:
+                    raise ValueError
+            except:
+                raise ValueError("Expects Mu_Z as a length-D vector or 1-by-D matrix.")
+
+            # Check dimensions of Sigma:
+            try:
+                if len(Sigma_init_Z.shape)==1:
+                    Sigma_init_Z = Sigma_init_Z.reshape(1,-1)  # Convert to 1-by-D array.
+                elif len(Sigma_init_Z.shape)==2 and Sigma_init_Z.shape[0]==1:
+                    pass
+                elif len(Sigma_init_Z.shape)==2 and Sigma_init_Z.shape[0]==Sigma_init_Z.shape[1]:
+                    Sigma_init_Z = np.diag(Sigma_init_Z)
+                else:
+                    raise ValueError
+            except:
+                raise ValueError("Expects Sigma_Z as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).")
+
+            # Check that Mu and Sigma match:
+            assert Mu_init_Z.shape[1]==Sigma_init_Z.shape[1], "Expect Mu_Z and Sigma_Z to have same dimension."
+            dims_Z = Mu_init_Z.shape[1]
+            # Convert covariance to log standard deviation:
+            logStDev_init_Z = 0.5*np.log(Sigma_init_Z)
+
+        elif self.mode!='BNN_LV':
+
+            assert Mu_init_Z is None, "This parameter is only for mode=BNN_LV."
+            assert Sigma_init_Z is None, "This parameter is only for mode=BNN_LV."
 
         # Store parameters:
         self.mode = mode
@@ -618,14 +667,21 @@ class BBVI:
         self.random_seed = random_seed
         self.dims = dims
 
+        # Params specific to BNN_LV:
+        if self.mode=='BNN_LV':
+            self.Mu_init_Z = Mu_init_Z
+            self.Sigma_init_Z = Sigma_init_Z
+            self.logStDev_init_Z = logStDev_init_Z
+            self.dims_Z = dims_Z
+
         # Build placeholder for state variables:
         self.params_hist = None  # History of parameters at each interation (built as list of arrays and converted to numpy 2D array).
         self.gradident_hist = None  # History of gradient at each iteration (built as list of arrays and converted to numpy 2D array).
         self.elbo_hist = None  # History of ELBO value at each iteration (built as list and converted to numpy 1D array).
-        self.magnitude_hist = None  # History of graident magnitude at each iteration (built as list and converted to numpy 1D array).
+        self.magnitude_hist = None  # History of gradient magnitude at each iteration (built as list and converted to numpy 1D array).
         self.seconds = None  # Runtime in seconds.
         self.np_random = None  # Numpy random state.
-        self.variational_gradient = None  # Graident function (computed with autograd).
+        self.variational_gradient = None  # Gradient function (computed with autograd).
         
         # Initialize:
         self._reset(warm_start=False)
@@ -657,14 +713,20 @@ class BBVI:
             # Take gradient of objective:
             self.variational_gradient = grad(self.variational_objective, argnum=0)
 
-    def _stack(self, Mu, logStDev):
+    def _stack(self, Mu, logStDev, Mu_Z=None, logStDev_Z=None):
         """
         Turns Mu and logStDev into a 1-by-2*D matrix of parameters.
         (This is the interal version of the function that uses flat vectors and log-standard-devations;
         a user-facing version that uses covariance and (optionally) square matrics is provided as a class method.)
         """
-        params = np.concatenate([Mu,logStDev], axis=-1)
-        return params
+        if self.mode=='BNN':
+            params = np.concatenate([Mu,logStDev], axis=-1)
+            return params
+        elif self.mode=='BNN_LV':
+            params = np.concatenate([Mu,logStDev,Mu_Z,logStDev_Z], axis=-1)
+            return params
+        else:
+            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
         
     def _unstack(self, params):
         """
@@ -672,16 +734,25 @@ class BBVI:
         (This is the interal version of the function that uses flat vectors and log-standard-devations;
         a user-facing version that uses covariance and (optionally) square matrics is provided as a class method.)
         """
-        Mu = params[:,:self.dims]
-        logStDev = params[:,self.dims:]
-        return Mu, logStDev
+        if self.mode=='BNN':
+            Mu = params[:,:self.dims]
+            logStDev = params[:,self.dims:]
+            return Mu, logStDev
+        elif self.mode=='BNN_LV':
+            Mu = params[:,:self.dims]
+            logStDev = params[:,self.dims:(2*self.dims)]
+            Mu_Z = params[:,(2*self.dims):(2*self.dims+self.dims_Z)]
+            logStDev_Z = params[:,(2*self.dims+self.dims_Z):]
+            return Mu, logStDev, Mu_Z, logStDev_Z
+        else:
+            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
 
     # Define optimizer and callback:
     def _callback(self, params, iteration, gradient):
         # Calculate ELBO:
         elbo_value = -self.variational_objective(params, iteration)
         elbo_value = elbo_value[0]  # Unpack single value from matrix.
-        # Calculate magnitude of graident:
+        # Calculate magnitude of gradient:
         grad_mag = np.linalg.norm(self.variational_gradient(params, iteration))
         # Update history:
         self.params_hist.append(params)
@@ -691,16 +762,17 @@ class BBVI:
         # Print progress (optional):
         if self.progress and ((iteration+1) % self.progress == 0):
             
-            printout = "Iteration {} : lower bound = {}, graident magnitude = {}".format(iteration+1, elbo_value, grad_mag)
+            printout = "Iteration {} : lower bound = {}, gradient magnitude = {}".format(iteration+1, elbo_value, grad_mag)
             print(printout)
             #print("params :",params)
             #print("gradient :",gradient)
 
-    def gaussian_entropy(self, logStDev):
+    def gaussian_entropy(self, logStDev, dims=None):
         """
         Calculates the Gaussian Entropy of logStDev
         (assuming logStDev is diagonal, and passed as a 1-by-D matrix).
         """
+        dims = self.dims if dims is None else dims
         # See : https://statproofbook.github.io/P/mvn-dent
         # Note that since the covariance matrix is diagonal: log(det(Covar)) is equivalent to trace(logStDev).
         # Here, logStDev is a vector of the logs of the square roots
@@ -708,7 +780,7 @@ class BBVI:
         # (i.e. logStDev is standard deviations, whereas the typical G.E. formula uses the covariance matrix).
         #dims = logStDev.shape[-1]
         #return dims/2*np.log(2*np.pi) + 1/2*np.sum(logStDev**2,axis=-1) + 1/2*dims
-        return 0.5*self.dims*( 1.0 + np.log(2*np.pi) ) + np.sum(logStDev,axis=-1)
+        return 0.5* dims *( 1.0 + np.log(2*np.pi) ) + np.sum(logStDev,axis=-1)
 
     def variational_objective(self, params, iteration=None):
         """
@@ -721,11 +793,24 @@ class BBVI:
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             posterior_term = np.mean(self.log_target_func(W_S), axis=0)
-            gaussian_entropy_term = self.gaussian_entropy(logStDev)
+            gaussian_entropy_term = self.gaussian_entropy(logStDev, dims=self.dims)
             elbo_approx = posterior_term + gaussian_entropy_term
             return -elbo_approx
-        elif self.mode=='BNNLV':
-            raise NotImplementedError("To do.")
+        elif self.mode=='BNN_LV':
+            Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(params)
+            # W part:
+            eps_S = self.np_random.randn(self.num_samples,*logStDev.shape)  # Each row is a different sample.
+            StDev = np.exp(logStDev)
+            W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
+            # Z part:
+            eps_Z_S = self.np_random.randn(self.num_samples,*logStDev_Z.shape)  # Each row is a different sample.
+            StDev_Z = np.exp(logStDev_Z)
+            Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
+            # Joint part:
+            posterior_term = np.mean(self.log_target_func(W_S, Z_S), axis=0)  # The output is of dimension S.
+            gaussian_entropy_term = self.gaussian_entropy(logStDev, dims=self.dims) + self.gaussian_entropy(logStDev_Z, dims=self.dims_Z)
+            elbo_approx = posterior_term + gaussian_entropy_term
+            return -elbo_approx
         else:
             raise NotImplementedError("Invalid mode: {}".format(self.mode))
 
