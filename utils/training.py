@@ -545,12 +545,20 @@ class BBVI:
             The function that is being approximated.
         
         Mu_init :
-            Initialization value for the mean of the variational distribution.
+            Initialization value for the mean of the variational distribution of W.
             Expects Mu as a length-D vector or 1-by-D matrix.
         
         Sigma_init :
-            Initialization value for the covariance of the variational distribution.
+            Initialization value for the covariance of the variational distribution of Z.
             Expects Sigma as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
+        
+        Mu_init_Z :
+            Initialization value for the mean of the variational distribution of W.
+            Expects Mu_Z as a length-D vector or 1-by-D matrix.
+        
+        Sigma_init_Z :
+            Initialization value for the covariance of the variational distribution of Z.
+            Expects Sigma_Z as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
 
         mode :
             The type of neural net (determines which ELBO is used).
@@ -577,7 +585,9 @@ class BBVI:
         mode = mode.replace('+','_').upper()
         assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
 
-        # Check dimensions of Mu:
+        # Get initial parameters for W:
+        if (self.mode=='BNN') or (self.mode=='BNN_LV'):
+
         try:
             if len(Mu_init.shape)==1:
                 Mu_init = Mu_init.reshape(1,-1)
@@ -639,7 +649,8 @@ class BBVI:
             # Convert covariance to log standard deviation:
             logStDev_init_Z = 0.5*np.log(Sigma_init_Z)
 
-        else:
+        elif self.mode!='BNN_LV':
+
             assert Mu_init_Z is None, "This parameter is only for mode=BNN_LV."
             assert Sigma_init_Z is None, "This parameter is only for mode=BNN_LV."
 
