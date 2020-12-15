@@ -434,9 +434,9 @@ class BNN_LV(BNN):
             [tensor-like object] : Adds user-specified noise.
         """
         Z_shape = tuple((*X.shape[:-1],self.L))
-        if input_noise=='auto':
+        if isinstance(input_noise, str) and input_noise=='auto':
             Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
-        elif input_noise=='zero':
+        elif isinstance(input_noise, str) and input_noise=='zero':
             Z = np.zeros(Z_shape)
         else:
             try:
@@ -460,9 +460,9 @@ class BNN_LV(BNN):
             [tensor-like object] : Adds user-specified noise.
         """
         Eps_shape = Y_.shape
-        if output_noise=='auto':
+        if isinstance(output_noise, str) and output_noise=='auto':
             Eps = self.random.normal(loc=0, scale=self.sigma, size=Eps_shape)
-        elif output_noise=='zero':
+        elif isinstance(output_noise, str) and output_noise=='zero':
             Eps = np.zeros(Eps_shape)
         else:
             try:

@@ -550,15 +550,15 @@ class BBVI:
         
         Sigma_init :
             Initialization value for the covariance of the variational distribution of Z.
-            Expects Sigma as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
+            Expects Sigma as a legnth-D vector, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
         
         Mu_init_Z :
             Initialization value for the mean of the variational distribution of W.
-            Expects Mu_Z as a length-D vector or 1-by-D matrix.
+            Expects Mu_Z as a length-N vector or N-by-L matrix.
         
         Sigma_init_Z :
             Initialization value for the covariance of the variational distribution of Z.
-            Expects Sigma_Z as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
+            Expects Sigma_Z as a legnth-N vector or N-by-L matrix.
 
         mode :
             The type of neural net (determines which ELBO is used).
@@ -607,7 +607,7 @@ class BBVI:
             else:
                 raise ValueError
         except:
-            raise ValueError("Expects Sigma as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).")
+            raise ValueError("Expects Sigma as a legnth-D vector, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).")
         
         # Check that Mu and Sigma match:
         assert Mu_init.shape[1]==Sigma_init.shape[1], "Expect Mu and Sigma to have same dimension."
@@ -617,33 +617,39 @@ class BBVI:
         
         if self.mode=='BNN_LV':
 
-            # Check dimensions of Mu:
+            # Check dimensions of Mu_Z (and infer number of latent features):
             try:
                 if len(Mu_init_Z.shape)==1:
-                    Mu_init_Z = Mu_init_Z.reshape(1,-1)
-                elif len(Mu_init_Z.shape)==2 and Mu_init_Z.shape[0]==1:
-                    pass
+                    # Convert vector of N values to N-by-L matrix (assuming L=1):
+                    Mu_init_Z = Mu_init_Z.reshape(-1,1)
+                elif len(Mu_init_Z.shape)==2 and Mu_init_Z.shape[0]:
+                    # Keep N-by-L matrix:
+                    if (Mu_init_Z.shape[0]==1) and (Mu_init_Z.shape[1]!=1):
+                        print("NOTE: Mu_init_Z should be N-by-L (where L is often 1), but in this case N=1; is that intentional?")
                 else:
                     raise ValueError
             except:
-                raise ValueError("Expects Mu_Z as a length-D vector or 1-by-D matrix.")
+                raise ValueError("Expects Mu_Z as a length-N vector or N-by-L matrix.")
 
-            # Check dimensions of Sigma:
+            # Check dimensions of Sigma_Z:
             try:
                 if len(Sigma_init_Z.shape)==1:
-                    Sigma_init_Z = Sigma_init_Z.reshape(1,-1)  # Convert to 1-by-D array.
-                elif len(Sigma_init_Z.shape)==2 and Sigma_init_Z.shape[0]==1:
-                    pass
-                elif len(Sigma_init_Z.shape)==2 and Sigma_init_Z.shape[0]==Sigma_init_Z.shape[1]:
-                    Sigma_init_Z = np.diag(Sigma_init_Z)
+                    # Convert vector of N values to N-by-L matrix (assuming L=1):
+                    Sigma_init_Z = Sigma_init_Z.reshape(-1,1)
+                elif len(Sigma_init_Z.shape)==2:
+                    # Keep N-by-L matrix:
+                    if (Sigma_init_Z.shape[0]==1) and (Sigma_init_Z.shape[1]!=1):
+                        print("NOTE: Sigma_init_Z should be N-by-L (where L is often 1), but in this case N=1; is that intentional?")
+                elif len(Sigma_init_Z.shape)==3:
+                    raise NotImplementedError  # This case is ambiguous.
                 else:
                     raise ValueError
             except:
-                raise ValueError("Expects Sigma_Z as a legnth-D matrix, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).")
+                raise ValueError("Expects Sigma_Z as a legnth-N vector or N-by-L matrix.")
 
             # Check that Mu and Sigma match:
-            assert Mu_init_Z.shape[1]==Sigma_init_Z.shape[1], "Expect Mu_Z and Sigma_Z to have same dimension."
-            dims_Z = Mu_init_Z.shape[1]
+            assert Mu_init_Z.shape==Sigma_init_Z.shape, f"Expect Mu_Z {Mu_init_Z.shape} and Sigma_Z {Sigma_init_Z.shape} to have same dimension."
+            N, L = Mu_init_Z.shape
             # Convert covariance to log standard deviation:
             logStDev_init_Z = 0.5*np.log(Sigma_init_Z)
 
@@ -670,7 +676,9 @@ class BBVI:
             self.Mu_init_Z = Mu_init_Z
             self.Sigma_init_Z = Sigma_init_Z
             self.logStDev_init_Z = logStDev_init_Z
-            self.dims_Z = dims_Z
+            self.dims_Z = N * L  # Size of the `stacked` version the parameters associated with Z.
+            self.L = L  # Number of latent features.
+            self.N = N  # Number of data points (Note: BBVI estimates a mean and variance for each Z of each data point).
         
         # Represent position as a 1-by-2D matrix:
         if self.mode=='BNN':
@@ -727,7 +735,9 @@ class BBVI:
             params = np.concatenate([Mu,logStDev], axis=-1)
             return params
         elif self.mode=='BNN_LV':
-            params = np.concatenate([Mu,logStDev,Mu_Z,logStDev_Z], axis=-1)
+            Mu_Z = Mu_Z.reshape(1,-1)  # Flatten N-by-L matrix into 1-by-(N*L) vector.
+            logStDev_Z = logStDev_Z.reshape(1,-1)  # Flatten N-by-L matrix into 1-by-(N*L) vector.
+            params = np.concatenate([Mu,logStDev,Mu_Z,logStDev_Z], axis=-1)  # Result is 1-by-2*(D+N*L)
             return params
         else:
             raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
@@ -747,6 +757,8 @@ class BBVI:
             logStDev = params[:,self.dims:(2*self.dims)]
             Mu_Z = params[:,(2*self.dims):(2*self.dims+self.dims_Z)]
             logStDev_Z = params[:,(2*self.dims+self.dims_Z):]
+            Mu_Z = Mu_Z.reshape(self.N,self.L)  # Expand 1-by-(N*L) vector back to N-by-L matrix.
+            logStDev_Z = logStDev_Z.reshape(self.N,self.L)  # Expand 1-by-(N*L) vector back to N-by-L matrix.
             return Mu, logStDev, Mu_Z, logStDev_Z
         else:
             raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
@@ -793,7 +805,7 @@ class BBVI:
         """
         if self.mode=='BNN':
             Mu, logStDev = self._unstack(params)
-            eps_S = self.np_random.randn(self.num_samples,*logStDev.shape)  # Each row is a different sample.
+            eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             posterior_term = np.mean(self.log_target_func(W_S), axis=0)
@@ -803,11 +815,13 @@ class BBVI:
         elif self.mode=='BNN_LV':
             Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(params)
             # W part:
-            eps_S = self.np_random.randn(self.num_samples,*logStDev.shape)  # Each row is a different sample.
+            #  Note: We drop the first dimension of the weights, which is 1, to have an S by D result.
+            eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Z part:
-            eps_Z_S = self.np_random.randn(self.num_samples,*logStDev_Z.shape)  # Each row is a different sample.
+            # Note: We keep the first dimension of the weights, which is L, to have an S by L by D result.
+            eps_Z_S = self.np_random.randn(self.num_samples,self.N,self.L)  # Each row is a different sample.
             StDev_Z = np.exp(logStDev_Z)
             Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Joint part:
