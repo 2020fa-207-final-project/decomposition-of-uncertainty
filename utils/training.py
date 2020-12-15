@@ -584,6 +584,7 @@ class BBVI:
         valid_modes = {'BNN','BNN_LV'}
         mode = mode.replace('+','_').upper()
         assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
+        self.mode = mode
 
         try:
             if len(Mu_init.shape)==1:
