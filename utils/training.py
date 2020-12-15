@@ -671,6 +671,12 @@ class BBVI:
             self.Sigma_init_Z = Sigma_init_Z
             self.logStDev_init_Z = logStDev_init_Z
             self.dims_Z = dims_Z
+        
+        # Represent position as a 1-by-2D matrix:
+        if self.mode=='BNN':
+            self.params_init = self._stack(Mu_init=Mu_init, logStDev_init=logStDev_init)
+        elif self.mode=='BNN_LV':
+            self.params_init = self._stack(Mu_init=Mu_init, logStDev_init=logStDev_init, Mu_init_Z=Mu_init_Z, logStDev_init_Z=logStDev_init_Z)
 
         # Build placeholder for state variables:
         self.params_hist = None  # History of parameters at each interation (built as list of arrays and converted to numpy 2D array).
@@ -826,14 +832,11 @@ class BBVI:
         
         # Start timer:
         time_start = time.time()
-        
-        # Represent position as a 1-by-2D matrix:
-        params_init = self._stack(self.Mu_init, self.logStDev_init)
 
         # Perform optimization with ADAM:
         params = adam(
             grad = self.variational_gradient,
-            x0 = params_init,
+            x0 = self.params_init,
             step_size = self.step_size,
             num_iters = self.num_iters,
             callback = self._callback,
