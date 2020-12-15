@@ -17,6 +17,7 @@ matplotlib = "*"
 scipy = "*"
 wandb = "*"
 pillow = "*"
+ipdb = "*"
 
 [requires]
 python_version = "3.7"

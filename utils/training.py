@@ -783,12 +783,13 @@ class BBVI:
             #print("params :",params)
             #print("gradient :",gradient)
 
-    def gaussian_entropy(self, logStDev, dims=None):
+    def gaussian_entropy(self, logStDev):
         """
         Calculates the Gaussian Entropy of logStDev
         (assuming logStDev is diagonal, and passed as a 1-by-D matrix).
         """
-        dims = self.dims if dims is None else dims
+        logStDev = logStDev.flatten()  # Where there are multiple latent features, unravel them into a vector.
+        dims = len(logStDev)
         # See : https://statproofbook.github.io/P/mvn-dent
         # Note that since the covariance matrix is diagonal: log(det(Covar)) is equivalent to trace(logStDev).
         # Here, logStDev is a vector of the logs of the square roots
@@ -809,7 +810,7 @@ class BBVI:
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             posterior_term = np.mean(self.log_target_func(W_S), axis=0)
-            gaussian_entropy_term = self.gaussian_entropy(logStDev, dims=self.dims)
+            gaussian_entropy_term = self.gaussian_entropy(logStDev)
             elbo_approx = posterior_term + gaussian_entropy_term
             return -elbo_approx
         elif self.mode=='BNN_LV':
@@ -826,8 +827,10 @@ class BBVI:
             Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Joint part:
             posterior_term = np.mean(self.log_target_func(W_S, Z_S), axis=0)  # The output is of dimension S.
-            gaussian_entropy_term = self.gaussian_entropy(logStDev, dims=self.dims) + self.gaussian_entropy(logStDev_Z, dims=self.dims_Z)
+            gaussian_entropy_term = self.gaussian_entropy(logStDev) + self.gaussian_entropy(logStDev_Z)
             elbo_approx = posterior_term + gaussian_entropy_term
+            # Return is a scalar but return it as a 1-value vector (for stacking):
+            elbo_approx = elbo_approx.reshape(1)  # Will (correctly) throw an error if not a scalar.
             return -elbo_approx
         else:
             raise NotImplementedError("Invalid mode: {}".format(self.mode))
