@@ -674,9 +674,9 @@ class BBVI:
         
         # Represent position as a 1-by-2D matrix:
         if self.mode=='BNN':
-            self.params_init = self._stack(Mu_init=Mu_init, logStDev_init=logStDev_init)
+            self.params_init = self._stack(Mu=Mu_init, logStDev=logStDev_init)
         elif self.mode=='BNN_LV':
-            self.params_init = self._stack(Mu_init=Mu_init, logStDev_init=logStDev_init, Mu_init_Z=Mu_init_Z, logStDev_init_Z=logStDev_init_Z)
+            self.params_init = self._stack(Mu=Mu_init, logStDev=logStDev_init, Mu_Z=Mu_init_Z, logStDev_Z=logStDev_init_Z)
 
         # Build placeholder for state variables:
         self.params_hist = None  # History of parameters at each interation (built as list of arrays and converted to numpy 2D array).
