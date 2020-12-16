@@ -42,3 +42,4 @@ venv.bak/
 
 # Weights & Biases log folders:
 **/wandb
+.DS_Store
