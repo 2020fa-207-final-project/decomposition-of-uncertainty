@@ -844,13 +844,12 @@ class BBVI:
         self.magnitude_hist.append(grad_mag)
         # Print progress (optional):
         if self.progress and ((iteration+1) % self.progress == 0):
-            
             printout = "Iteration {} : lower bound = {}, gradient magnitude = {}".format(iteration+1, elbo_value, grad_mag)
             print(printout)
             #print("params :",params)
             #print("gradient :",gradient)
         # Log progress to W&B (optional):
-        if self.wb_progress and (i % self.wb_progress == 0):
+        if self.wb_progress and ((iteration+1) % self.wb_progress == 0):
             # Upload performance metrics:
             wandb.log({
                 'params' : params,
@@ -863,7 +862,7 @@ class BBVI:
                 self.save_state(self.wb_filepath, replace=True)  # Saves a json file locally.
                 wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
             except Exception as e:
-                print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
+                print(f"Failed to save {self.wb_filepath} at step {iteration+1}.\n\t{e}")
             # Callback function (for producing diagnostic plots):
             callback = None if 'callback' not in self.wb_settings else self.wb_settings['callback']
             if callback is not None:
@@ -874,7 +873,7 @@ class BBVI:
                     else:
                         callback(self)  # Pass the HMC object to the callback function.
                 except Exception as e:
-                    print(f"Callback failed at step {i}.\n\t{e}")
+                    print(f"Callback failed at step {iteration+1}.\n\t{e}")
 
     def gaussian_entropy(self, logStDev):
         """
