@@ -890,7 +890,7 @@ class BBVI:
             Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(params)
             # W part:
             #   Note: We drop the first dimension of the weights, which is 1, to have an S by D result.
-            eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
+            eps_S = self.np_random.randn(self.num_samples,1,self.dims)  # Each row is a different sample.
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Z part:
@@ -899,7 +899,10 @@ class BBVI:
             StDev_Z = np.exp(logStDev_Z)
             Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Joint part:
-            posterior_term = np.mean(self.log_target_func(W_S, Z_S), axis=0)  # The output is of dimension S.
+            posterior_term = np.mean([
+                self.log_target_func(w, z)
+                for w, z in zip(W_S,Z_S)
+            ], axis=0)
             gaussian_entropy_term = self.gaussian_entropy(logStDev) + self.gaussian_entropy(logStDev_Z)
             elbo_approx = posterior_term + gaussian_entropy_term
             # Return is a scalar but return it as a 1-value vector (for stacking):
