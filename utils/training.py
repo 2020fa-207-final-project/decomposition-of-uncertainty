@@ -889,12 +889,12 @@ class BBVI:
         elif self.mode=='BNN_LV':
             Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(params)
             # W part:
-            #  Note: We drop the first dimension of the weights, which is 1, to have an S by D result.
+            #   Note: We drop the first dimension of the weights, which is 1, to have an S by D result.
             eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
             StDev = np.exp(logStDev)
             W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
             # Z part:
-            # Note: We keep the first dimension of the weights, which is L, to have an S by L by D result.
+            #   Note: We keep the first dimension of the weights, which is L, to have an S by L by D result.
             eps_Z_S = self.np_random.randn(self.num_samples,self.N,self.L)  # Each row is a different sample.
             StDev_Z = np.exp(logStDev_Z)
             Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
@@ -965,6 +965,35 @@ class BBVI:
         Sigma_final = Sigma_final[0]  # Remove first dimension.
 
         return Mu_final, Sigma_final
+
+    @property
+    def params(self):
+        if len(self.params_hist) == 0:
+            return None
+        return self.params_hist[-1]
+
+    def get_samples(self, num=None, seed=None):
+        # Determine how many samples to get: 
+        num_samples = self.num_samples if num is None else num
+        # Use sampler's random state, unless otherwise specified:
+        np_random = self.np_random if seed is None else np.random.RandomState(seed)
+        # Get means and variances of the approximation distributions:
+        if self.mode=='BNN':
+            Mu, logStDev = self._unstack(self.params)
+            Sigma = np.exp(logStDev)**2
+            # Use means and variances to generate samples from proposal distributions:
+            samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
+            return samples
+        elif self.mode=='BNN_LV':
+            Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(self.params)
+            Sigma = np.exp(logStDev)**2
+            Sigma_Z = np.exp(logStDev_Z)**2
+            # Use means and variances to generate samples from proposal distributions:
+            samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
+            samples_Z = np_random.normal(loc=Mu_Z, scale=Sigma_Z, size=(num_samples, *Mu_Z.shape))
+            return (samples, samples_Z)
+        else:
+            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
     
     def save_state(self, filepath, replace=False):
         # Get histories (as lists of lists):
