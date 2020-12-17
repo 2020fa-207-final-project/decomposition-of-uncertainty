@@ -625,20 +625,31 @@ class SamplerModel:
     
     def stack(self, W, Z):
         if len(Z.shape)==2:
-            assert (len(W.shape)==2) and (W.shape==(1,self.D)), f"Expects an 1 by D matrix, not {W.shape}"
+            assert (len(W.shape)==2), f"Expects an S by D matrix, not {W.shape}"
             assert Z.shape[0]==self.N, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
             assert Z.shape[1]==self.L, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
-            S = Z.shape[1]
+            Z = Z.reshape(1,*Z.shape)  # Add S=1 as first dimension.
         elif len(Z.shape)==3:
-            assert (len(W.shape)==2) and (W.shape==(1,self.D)), f"Expects an 1 by D matrix, not {W.shape}"
+            assert (len(W.shape)==2), f"Expects an S by D matrix, not {W.shape}"
             assert Z.shape[-2]==self.N, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
             assert Z.shape[-1]==self.L, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
-            S = Z.shape[0]
         else:
             raise NotImplementedError(f"Z should be two (N by L) or three (S by N by L) dimensions, not {Z.shape}")
+        # Make sure both inputs have the same number of samples (or 1):
+        S = max(W.shape[0],Z.shape[0])
+        if (W.shape[0] not in {1,S}) or (Z.shape[0] not in {1,S}):
+            ValueError(f"If either input has more than one sample, they must both has the same number; received {W.shape[0]} and {Z.shape[0]}.")
+        # Broadcast both inputs to have size S:
+        if W.shape[0]<S:
+            assert W.shape[0]==1, f"W and Z must have same number of samples or 1 sample, but cannot broadcast two different size: {W.shape[0]} and {Z.shape[0]}"
+            W = np.tile(W, reps=(S,1))  # Repeat S times along first axis and preserve other axis (D).
+        if Z.shape[0]<S:
+            assert Z.shape[0]==1, f"W and Z must have same number of samples or 1 sample, but cannot broadcast two different size: {W.shape[0]} and {Z.shape[0]}"
+            Z = np.tile(Z, reps=(S,1,1))  # Repeat S times along first axis and preserve other axes (N and L).
+        # Reshape and concatenate:
         W_flat = W.reshape(S,self.D)
         Z_flat = Z.reshape(S,self.N*self.L)
-        samples = np.concatenate([W_flat,Z_flat],axis=0)
+        samples = np.concatenate([W_flat,Z_flat],axis=1)  # Create 1 by (1*D+N*L) matrix.
         return samples
     
     def unstack(self, samples):
