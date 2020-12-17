@@ -140,7 +140,6 @@ class HMC:
 
         # Build placeholder for state variables:
         self.raw_samples = None  # History of samples after burn-in and thinning (built as list of arrays and converted to numpy 2D array).
-        self.samples = None  # History of raw samples (built as list of arrays and converted to numpy 2D array).
         self.n_accepted = None  # Number of accepted samples.
         self.n_rejected = None  # Number of rejected samples.
         self.seconds = None  # Runtime in seconds.
@@ -153,17 +152,12 @@ class HMC:
 
         if warm_start:
 
-            # Convert state variables from arrays back to lists
-            #   to continue appending:
-            if not isinstance(self.raw_samples, list):
-                self.raw_samples = self.raw_samples.tolist()
-                self.samples = self.samples.tolist()
+            pass
 
         else:
 
             # Reset state history:
             self.raw_samples = list()
-            self.samples = list()
             self.n_accepted = 0
             self.n_rejected = 0
             self.seconds = float("-Inf")
@@ -181,20 +175,6 @@ class HMC:
         assert isinstance(thinning_factor, int) and thinning_factor>0, "thinning_factor must be a positive integer."
         iters = int(np.ceil(total_samples/(1.0-burn_in)*thinning_factor))
         return iters
-
-    def burn_thin(self):
-        """
-        Remove burn-in (by negative indexing) and perform thinning (by list slicing).
-        Takes builds `.samples` from `.raw_samples`.
-        """
-        # Preserve types:
-        if isinstance(self.raw_samples, list):
-            self.samples = self.raw_samples[self.burn_num::self.thinning_factor]
-        else:
-            # 3D numpy array:
-            raw_samples = self.raw_samples.tolist()
-            samples = raw_samples[self.burn_num::self.thinning_factor]
-            self.samples = np.array(samples)
         
     def kinetic_func(self, p):
         """
@@ -409,10 +389,6 @@ class HMC:
                 wandb.run.finish()
             except:
                 print("W & B run already ended. (Should only happen if .sample() is called more than once.)")
-                
-        # Remove burn-in (by negative indexing) and perform thinning (by list slicing):
-        self.raw_samples = np.vstack(self.raw_samples)
-        self.burn_thin()  # (Re)builds self.samples from self.raw_samples.
         
         # Stop timer:
         time_end = time.time()
@@ -424,9 +400,18 @@ class HMC:
         # Return new samples:
         return self.samples
 
+    def get_samples(self):
+        """
+        Remove burn-in (by negative indexing) and perform thinning (by list slicing).
+        Builds `.samples` from `.raw_samples`.
+        """
+        return self.raw_samples[self.burn_num::self.thinning_factor]
+
+    @property
+    def samples(self):
+        return self.get_samples()
+
     def save_state(self, filepath, replace=False):
-        # (Re)build list of clean samples from raw_samples:
-        self.burn_thin()
         # Get raw samples (as list of list of lists):
         raw_samples = np.array(self.raw_samples).tolist()
         # Get samples (as list of list of lists):
@@ -456,11 +441,7 @@ class HMC:
         with open(filepath, 'r') as f:
             hmc_state = json.load(f)
         # Get raw samples:
-        raw_samples = np.vstack(hmc_state['raw_samples'])
-        self.raw_samples = raw_samples
-        # Get samples:
-        samples = np.vstack(hmc_state['samples'])
-        self.samples = samples
+        self.raw_samples = hmc_state['raw_samples']
         # Get random state:
         random_state = hmc_state['random_state']
         random_state[1] = np.array(random_state[1])
@@ -476,17 +457,17 @@ def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwarg
     The rest of the keyword arguments are passed directly to the plotting function.
     """
     assert 'samples' not in kwargs, "No need to provide `samples`, as they will we extract from current HMC state."
-    def callback(hmc):
-        filepath = os.path.join(hmc.wb_base_path, filename+'.png')
-        hmc.burn_thin()  # Build samples from raw_samples.
-        if len(hmc.samples)>0:
-            samples = np.vstack(hmc.samples)  # Get samples.
+    def callback(sampler):
+        filepath = os.path.join(sampler.wb_base_path, filename+'.png')
+        if len(sampler.samples)>0:
+            samples = sampler.get_samples()  # Get samples from sampler.
+            samples = np.vstack(samples)  # Convert to numpy array.
             kwargs['samples'] = samples  # Add samples to keyword arguments.
             ax = plot_func(**kwargs)  # Call plotting function.
             ax.figure.savefig(filepath)  # Save plot locally.
-            hmc.wandb.save(filepath, base_path=hmc.wb_base_path)  # Upload plot file to W&B.
+            sampler.wandb.save(filepath, base_path=sampler.wb_base_path)  # Upload plot file to W&B.
             img = Image.open(filepath)  # Load image as array.
-            hmc.wandb.log({filename:[hmc.wandb.Image(img, caption=filename)]})
+            sampler.wandb.log({filename:[sampler.wandb.Image(img, caption=filename)]})
             print(f"Callback: Saved plot {filepath} ({samples.shape[0]} samples).")
         else:
             print(f"Callback: No samples to plot.")
@@ -503,18 +484,18 @@ def build_wb_callback_postpred(model, x_data):
         The X values to plot (vector of length N; or )
     """
     x_data = np.array(x_data).flatten().reshape(-1,1)
-    def wb_post_pred(hmc):
-        hmc.burn_thin()  # Build samples from raw_samples.
-        if len(hmc.samples)>0:
-            samples = np.vstack(hmc.samples)  # Get samples.
+    def wb_post_pred(sampler):
+        if len(sampler.samples)>0:
+            samples = sampler.get_samples()  # Get samples from sampler.
+            samples = np.vstack(samples)  # Convert to numpy array.
             S = samples.shape[0]  # Get number of models.
             y_pred = model.forward(x_data, samples)
             x_vals = np.tile(x_data, reps=(S,1,1))
             assert y_pred.shape == x_vals.shape
             # Build W&B table and plot:
             data = [[x, y] for (x, y) in zip(x_vals.flatten(), y_pred.flatten())]
-            table = hmc.wandb.Table(data=data, columns = ["class_x", "class_y"])
-            hmc.wandb.log({"posterior_predictic" : hmc.wandb.plot.scatter(table, "class_x", "class_y")})
+            table = sampler.wandb.Table(data=data, columns = ["class_x", "class_y"])
+            sampler.wandb.log({"posterior_predictic" : sampler.wandb.plot.scatter(table, "class_x", "class_y")})
             print(f"Callback: Built plot with {samples.shape[0]} samples.")
         else:
             print(f"Callback: No samples to plot.")
