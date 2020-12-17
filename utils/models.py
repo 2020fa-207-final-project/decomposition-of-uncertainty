@@ -46,6 +46,9 @@ from autograd import numpy as np
 from autograd import grad
 from autograd.misc.optimizers import adam
 
+from utils.functions import log_gaussian
+
+
 class BNN:
     """
     A nerual network with M inputs and K outputs with D weights.
@@ -524,3 +527,155 @@ class BNN_LV(BNN):
         super().fit(X=X_, Y=Y_, *args, **kwargs)
         self.fitting = False  # Restore normal state.
         return
+
+class BayesianModel:
+
+    """
+    A Bayesian model for BNN LV.
+    """
+    
+    def __init__(
+        self,
+        X, Y, nn,
+        prior_weights_mean = 0.0,
+        prior_weights_stdev = 1.0,
+        prior_latents_mean = 0.0,
+        prior_latents_stdev = 1.0,
+        likelihood_stdev = 1.0,
+        latent_gamma = [1.0],  # One value per latent feautre.
+        latent_sigma = [1.0],  # One value per model output.
+    ):
+        
+        # Check inputs:
+        assert len(X.shape)==2, f"Expects X to be N by M, not {X.shape}"
+        assert len(Y.shape)==2, f"Expects Y to be N by K, not {Y.shape}"
+        assert X.shape[0]==Y.shape[0], f"Expects X {X.shape} and Y {Y.shape} to have same first dimension."
+        latent_gamma = latent_gamma if isinstance(latent_gamma, list) else [latent_gamma]  # Make list.
+        latent_sigma = latent_sigma if isinstance(latent_sigma, list) else [latent_sigma]  # Make list.
+        
+        # Get dimensions:
+        self.L = len(latent_gamma)
+        self.N = X.shape[0]
+        self.M = X.shape[1]
+        self.K = Y.shape[1]
+        self.D = nn.D
+        
+        # Store parameters:
+        self.X = X
+        self.Y = Y
+        self.nn = nn
+        self.prior_weights_mean = prior_weights_mean
+        self.prior_weights_stdev = prior_weights_stdev
+        self.prior_latents_mean = prior_latents_mean
+        self.prior_latents_stdev = prior_latents_stdev
+        self.likelihood_stdev = likelihood_stdev
+        self.latent_gamma = latent_gamma
+        self.latent_sigma = latent_sigma
+        
+    def log_prior_weights(self, W):
+        mu = self.prior_weights_mean
+        sigma = self.prior_weights_stdev
+        return np.sum(log_gaussian(x=W, mu=mu, sigma=sigma), axis=-1)
+    
+    def log_prior_latents(self, Z):
+        mu = self.prior_latents_mean
+        sigma = self.prior_latents_stdev
+        return np.sum(np.sum(log_gaussian(x=Z, mu=mu, sigma=sigma), axis=-1), axis=-1)
+        
+    def log_prior(self, W, Z):
+        return self.log_prior_weights(W) + self.log_prior_latents(Z)
+    
+    def log_likelihood(self, W, Z):
+        X = self.X
+        Y = self.Y
+        mu = self.nn.forward(X, weights=W, input_noise=Z)
+        sigma = self.likelihood_stdev
+        return np.sum(log_gaussian(x=Y, mu=mu, sigma=sigma), axis=0)
+    
+    def log_posterior(self, W, Z):
+        return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
+    
+class SamplerModel:
+
+    """
+    A wrapper for connecting a Bayesian model to a sampler,
+    which stacks weights and latent variables in a single `samples` matrix
+    (S by (1*D+N*L)) that includes both model weights and latent variables.
+    """
+    
+    def __init__(
+        self,
+        model,
+    ):
+        
+        # Store model:
+        self.model = model
+        
+        # Store dimensions of wrapped model:
+        self.L = model.L
+        self.N = model.N
+        self.M = model.M
+        self.K = model.K
+        self.D = model.D
+        
+        # Store functions of wrapped model:
+        self._log_prior = model.log_prior
+        self._log_likelihood = model.log_likelihood
+        self._log_posterior = model.log_posterior
+    
+    def stack(self, W, Z):
+        if len(Z.shape)==2:
+            assert (len(W.shape)==2) and (W.shape==(1,self.D)), f"Expects an 1 by D matrix, not {W.shape}"
+            assert Z.shape[0]==self.N, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
+            assert Z.shape[1]==self.L, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
+            S = Z.shape[1]
+        elif len(Z.shape)==3:
+            assert (len(W.shape)==2) and (W.shape==(1,self.D)), f"Expects an 1 by D matrix, not {W.shape}"
+            assert Z.shape[-2]==self.N, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
+            assert Z.shape[-1]==self.L, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
+            S = Z.shape[0]
+        else:
+            raise NotImplementedError(f"Z should be two (N by L) or three (S by N by L) dimensions, not {Z.shape}")
+        W_flat = W.reshape(S,self.D)
+        Z_flat = Z.reshape(S,self.N*self.L)
+        samples = np.concatenate([W_flat,Z_flat],axis=0)
+        return samples
+    
+    def unstack(self, samples):
+        assert len(samples.shape)==2, f"Expects samples to be 2 dimenional."
+        assert samples.shape[1]==(1*self.D)+(self.N*self.L), f"Expects samples to have a value for each weight and a value for each data point for each latent feature."
+        S = samples.shape[0]
+        if S==1:
+            W = samples[:,:self.D].reshape(1,self.D)
+            Z = samples[:,self.D:].reshape(self.N,self.L)  # 2 dimensions.
+        else:
+            W = samples[:,:self.D].reshape(S,self.D)
+            Z = samples[:,self.D:].reshape(S,self.N,self.L)  # 3 dimensions.
+        return W, Z
+
+    def vectorize(self, func, W, Z):
+        assert len(Z.shape)==3, "Vectorization is only defined for 3 dimension case."
+        results = np.array([
+            func(w.reshape(1,-1), z)
+            for w, z in zip(W,Z)
+        ]).flatten()
+        assert len(results)==Z.shape[0], f"Vectorization over S samples had unexpected results: {results} ."
+        return results
+        
+    def log_prior(self, samples):
+        W, Z = self.unstack(samples)
+        if len(Z.shape)==3:
+            return self.vectorize(self.model.log_prior, W, Z)
+        return self.model.log_prior(W, Z)
+    
+    def log_likelihood(self, samples):
+        W, Z = self.unstack(samples)
+        if len(Z.shape)==3:
+            return self.vectorize(self.model.log_likelihood, W, Z)
+        return self.model.log_likelihood(W, Z)
+    
+    def log_posterior(self, samples):
+        W, Z = self.unstack(samples)
+        if len(Z.shape)==3:
+            return self.vectorize(self.model.log_posterior, W, Z)
+        return self.model.log_posterior(W, Z)
