@@ -878,6 +878,50 @@ class BBVI:
         Sigma_final = Sigma_final[0]  # Remove first dimension.
 
         return Mu_final, Sigma_final
+    
+    def save_state(self, filepath, replace=False):
+        # Get histories (as lists of lists):
+        params_hist = np.array(self.params_hist).tolist()
+        gradident_hist = np.array(self.gradident_hist).tolist()
+        elbo_hist = np.array(self.elbo_hist).tolist()
+        magnitude_hist = np.array(self.magnitude_hist).tolist()
+        # Get random state:
+        random_state = list(self.np_random.get_state())
+        random_state[1] = random_state[1].tolist()
+        # Make dictionary:
+        bbvi_state = {
+            'params_hist' : params_hist,
+            'gradident_hist' : gradident_hist,
+            'elbo_hist' : elbo_hist,
+            'magnitude_hist' : magnitude_hist,
+            'random_state' : random_state,
+        }
+        # Save dictionary as json:
+        filename = filepath.split('/')[-1]
+        directory = filepath[:-len(filename)]
+        if not os.path.isdir('./'+directory):
+            raise FileNotFoundError(f"Make sure directory exists: {directory}")
+        if not replace and os.path.isfile(filename):
+            raise FileExistsError(f"Operation would overwrite file: {filepath}")
+        with open(filepath, 'w') as f:
+            json.dump(bbvi_state, f, indent=4)
+        print(f"Saved BBVI state : {filepath} .")
+        
+    def load_state(self, filepath):
+        # Load dictionary:
+        with open(filepath, 'r') as f:
+            bbvi_state = json.load(f)
+        # Get histories:
+        self.params_hist = np.vstack(bbvi_state['params_hist'])
+        self.gradident_hist = np.vstack(bbvi_state['gradident_hist'])
+        self.elbo_hist = np.array(bbvi_state['elbo_hist'])
+        self.magnitude_hist = np.array(bbvi_state['magnitude_hist'])
+        # Get random state:
+        random_state = bbvi_state['random_state']
+        random_state[1] = np.array(random_state[1])
+        random_state = tuple(random_state)
+        self.np_random.set_state(random_state)
+        print(f"Loaded BBVI state : {filepath} .")
 
     @staticmethod
     def stack_params(Mu, Sigma, from_square=False):
