@@ -514,8 +514,7 @@ class BBVI:
     """
 
     def __init__(self,
-        log_target_func, Mu_init, Sigma_init, mode='BNN',
-        Mu_init_Z=None, Sigma_init_Z=None,
+        log_target_func, Mu_init, Sigma_init,
         num_samples=1_000, step_size=0.1, num_iters=1_000,
         random_seed=None, progress=False,
         wb_settings=False,
@@ -533,18 +532,6 @@ class BBVI:
         Sigma_init :
             Initialization value for the covariance of the variational distribution of Z.
             Expects Sigma as a legnth-D vector, 1-by-D matrix, or D-by-D diagonal matrix (off-diagonal entries are assumed to be zero).
-        
-        Mu_init_Z :
-            Initialization value for the mean of the variational distribution of W.
-            Expects Mu_Z as a length-N vector or N-by-L matrix.
-        
-        Sigma_init_Z :
-            Initialization value for the covariance of the variational distribution of Z.
-            Expects Sigma_Z as a legnth-N vector or N-by-L matrix.
-
-        mode :
-            The type of neural net (determines which ELBO is used).
-            Options are: 'BNN', 'BNN_LV'.
         
         num_samples :
             Number of noise samples taken during the reparameterization step.
@@ -592,15 +579,12 @@ class BBVI:
             # Create a dictionary of hyperparameters:
             config = dict() if 'archive' not in wb_settings else wb_settings['archive']
             config.update({
-                'mode' : mode,
                 'num_samples' : num_samples,
                 'step_size' : step_size,
                 'num_iters' : num_iters,
                 'random_seed' : random_seed,
                 'Mu_init' : Mu_init,
                 'Sigma_init' : Sigma_init,
-                'Mu_init_Z' : Mu_init_Z,
-                'Sigma_init_Z' : Sigma_init_Z,
             })
             # Define helper function:
             def get_wb_setting(key, default):
@@ -627,12 +611,6 @@ class BBVI:
             self.wb_filepath = os.path.join(self.wb_base_path, self.wb_filename)
             # Bind the W&B module to the instance, for use in callback (e.g. for plotting progress):
             self.wandb = wandb
-
-        # Check mode:
-        valid_modes = {'BNN','BNN_LV'}
-        mode = mode.replace('+','_').upper()
-        assert mode in valid_modes, f"{mode} is not a valid mode: {valid_modes}"
-        self.mode = mode
 
         try:
             if len(Mu_init.shape)==1:
@@ -662,52 +640,8 @@ class BBVI:
         dims = Mu_init.shape[1]
         # Convert covariance to log standard deviation:
         logStDev_init = 0.5*np.log(Sigma_init)
-        
-        if self.mode=='BNN_LV':
-
-            # Check dimensions of Mu_Z (and infer number of latent features):
-            try:
-                if len(Mu_init_Z.shape)==1:
-                    # Convert vector of N values to N-by-L matrix (assuming L=1):
-                    Mu_init_Z = Mu_init_Z.reshape(-1,1)
-                elif len(Mu_init_Z.shape)==2 and Mu_init_Z.shape[0]:
-                    # Keep N-by-L matrix:
-                    if (Mu_init_Z.shape[0]==1) and (Mu_init_Z.shape[1]!=1):
-                        print("NOTE: Mu_init_Z should be N-by-L (where L is often 1), but in this case N=1; is that intentional?")
-                else:
-                    raise ValueError
-            except:
-                raise ValueError("Expects Mu_Z as a length-N vector or N-by-L matrix.")
-
-            # Check dimensions of Sigma_Z:
-            try:
-                if len(Sigma_init_Z.shape)==1:
-                    # Convert vector of N values to N-by-L matrix (assuming L=1):
-                    Sigma_init_Z = Sigma_init_Z.reshape(-1,1)
-                elif len(Sigma_init_Z.shape)==2:
-                    # Keep N-by-L matrix:
-                    if (Sigma_init_Z.shape[0]==1) and (Sigma_init_Z.shape[1]!=1):
-                        print("NOTE: Sigma_init_Z should be N-by-L (where L is often 1), but in this case N=1; is that intentional?")
-                elif len(Sigma_init_Z.shape)==3:
-                    raise NotImplementedError  # This case is ambiguous.
-                else:
-                    raise ValueError
-            except:
-                raise ValueError("Expects Sigma_Z as a legnth-N vector or N-by-L matrix.")
-
-            # Check that Mu and Sigma match:
-            assert Mu_init_Z.shape==Sigma_init_Z.shape, f"Expect Mu_Z {Mu_init_Z.shape} and Sigma_Z {Sigma_init_Z.shape} to have same dimension."
-            N, L = Mu_init_Z.shape
-            # Convert covariance to log standard deviation:
-            logStDev_init_Z = 0.5*np.log(Sigma_init_Z)
-
-        elif self.mode!='BNN_LV':
-
-            assert Mu_init_Z is None, "This parameter is only for mode=BNN_LV."
-            assert Sigma_init_Z is None, "This parameter is only for mode=BNN_LV."
 
         # Store parameters:
-        self.mode = mode
         self.log_target_func = log_target_func
         self.Mu_init = Mu_init
         self.Sigma_init = Sigma_init
@@ -718,21 +652,9 @@ class BBVI:
         self.progress = progress
         self.random_seed = random_seed
         self.dims = dims
-
-        # Params specific to BNN_LV:
-        if self.mode=='BNN_LV':
-            self.Mu_init_Z = Mu_init_Z
-            self.Sigma_init_Z = Sigma_init_Z
-            self.logStDev_init_Z = logStDev_init_Z
-            self.dims_Z = N * L  # Size of the `stacked` version the parameters associated with Z.
-            self.L = L  # Number of latent features.
-            self.N = N  # Number of data points (Note: BBVI estimates a mean and variance for each Z of each data point).
         
         # Represent position as a 1-by-2D matrix:
-        if self.mode=='BNN':
-            self.params_init = self._stack(Mu=Mu_init, logStDev=logStDev_init)
-        elif self.mode=='BNN_LV':
-            self.params_init = self._stack(Mu=Mu_init, logStDev=logStDev_init, Mu_Z=Mu_init_Z, logStDev_Z=logStDev_init_Z)
+        self.params_init = self._stack(Mu=Mu_init, logStDev=logStDev_init)
 
         # Build placeholder for state variables:
         self.params_hist = None  # History of parameters at each interation (built as list of arrays and converted to numpy 2D array).
@@ -773,22 +695,14 @@ class BBVI:
             # Take gradient of objective:
             self.variational_gradient = grad(self.variational_objective, argnum=0)
 
-    def _stack(self, Mu, logStDev, Mu_Z=None, logStDev_Z=None):
+    def _stack(self, Mu, logStDev):
         """
         Turns Mu and logStDev into a 1-by-2*D matrix of parameters.
         (This is the interal version of the function that uses flat vectors and log-standard-devations;
         a user-facing version that uses covariance and (optionally) square matrics is provided as a class method.)
         """
-        if self.mode=='BNN':
-            params = np.concatenate([Mu,logStDev], axis=-1)
-            return params
-        elif self.mode=='BNN_LV':
-            Mu_Z = Mu_Z.reshape(1,-1)  # Flatten N-by-L matrix into 1-by-(N*L) vector.
-            logStDev_Z = logStDev_Z.reshape(1,-1)  # Flatten N-by-L matrix into 1-by-(N*L) vector.
-            params = np.concatenate([Mu,logStDev,Mu_Z,logStDev_Z], axis=-1)  # Result is 1-by-2*(D+N*L)
-            return params
-        else:
-            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
+        params = np.concatenate([Mu,logStDev], axis=-1)
+        return params
         
     def _unstack(self, params):
         """
@@ -796,20 +710,9 @@ class BBVI:
         (This is the interal version of the function that uses flat vectors and log-standard-devations;
         a user-facing version that uses covariance and (optionally) square matrics is provided as a class method.)
         """
-        if self.mode=='BNN':
-            Mu = params[:,:self.dims]
-            logStDev = params[:,self.dims:]
-            return Mu, logStDev
-        elif self.mode=='BNN_LV':
-            Mu = params[:,:self.dims]
-            logStDev = params[:,self.dims:(2*self.dims)]
-            Mu_Z = params[:,(2*self.dims):(2*self.dims+self.dims_Z)]
-            logStDev_Z = params[:,(2*self.dims+self.dims_Z):]
-            Mu_Z = Mu_Z.reshape(self.N,self.L)  # Expand 1-by-(N*L) vector back to N-by-L matrix.
-            logStDev_Z = logStDev_Z.reshape(self.N,self.L)  # Expand 1-by-(N*L) vector back to N-by-L matrix.
-            return Mu, logStDev, Mu_Z, logStDev_Z
-        else:
-            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
+        Mu = params[:,:self.dims]
+        logStDev = params[:,self.dims:]
+        return Mu, logStDev
 
     # Define optimizer and callback:
     def _callback(self, params, iteration, gradient):
@@ -877,39 +780,14 @@ class BBVI:
         Provides a stochastic estimate of the variational lower bound.
         (The `iteration` parameter is required by ADAM but is not used.)
         """
-        if self.mode=='BNN':
-            Mu, logStDev = self._unstack(params)
-            eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
-            StDev = np.exp(logStDev)
-            W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
-            posterior_term = np.mean(self.log_target_func(W_S), axis=0)
-            gaussian_entropy_term = self.gaussian_entropy(logStDev)
-            elbo_approx = posterior_term + gaussian_entropy_term
-            return -elbo_approx
-        elif self.mode=='BNN_LV':
-            Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(params)
-            # W part:
-            #   Note: We drop the first dimension of the weights, which is 1, to have an S by D result.
-            eps_S = self.np_random.randn(self.num_samples,1,self.dims)  # Each row is a different sample.
-            StDev = np.exp(logStDev)
-            W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
-            # Z part:
-            #   Note: We keep the first dimension of the weights, which is L, to have an S by L by D result.
-            eps_Z_S = self.np_random.randn(self.num_samples,self.N,self.L)  # Each row is a different sample.
-            StDev_Z = np.exp(logStDev_Z)
-            Z_S = eps_Z_S * StDev_Z + Mu_Z  # Perturb StDev element-wise for each of `num_samples` in eps_S.
-            # Joint part:
-            posterior_term = np.mean([
-                self.log_target_func(w, z)
-                for w, z in zip(W_S,Z_S)
-            ], axis=0)
-            gaussian_entropy_term = self.gaussian_entropy(logStDev) + self.gaussian_entropy(logStDev_Z)
-            elbo_approx = posterior_term + gaussian_entropy_term
-            # Return is a scalar but return it as a 1-value vector (for stacking):
-            elbo_approx = elbo_approx.reshape(1)  # Will (correctly) throw an error if not a scalar.
-            return -elbo_approx
-        else:
-            raise NotImplementedError("Invalid mode: {}".format(self.mode))
+        Mu, logStDev = self._unstack(params)
+        eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
+        StDev = np.exp(logStDev)
+        W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
+        posterior_term = np.mean(self.log_target_func(W_S), axis=0)
+        gaussian_entropy_term = self.gaussian_entropy(logStDev)
+        elbo_approx = posterior_term + gaussian_entropy_term
+        return -elbo_approx
 
     def run(self, num_iters=None, progress=None, warm_start=False):
 
@@ -981,22 +859,11 @@ class BBVI:
         # Use sampler's random state, unless otherwise specified:
         np_random = self.np_random if seed is None else np.random.RandomState(seed)
         # Get means and variances of the approximation distributions:
-        if self.mode=='BNN':
-            Mu, logStDev = self._unstack(self.params)
-            Sigma = np.exp(logStDev)**2
-            # Use means and variances to generate samples from proposal distributions:
-            samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
-            return samples
-        elif self.mode=='BNN_LV':
-            Mu, logStDev, Mu_Z, logStDev_Z = self._unstack(self.params)
-            Sigma = np.exp(logStDev)**2
-            Sigma_Z = np.exp(logStDev_Z)**2
-            # Use means and variances to generate samples from proposal distributions:
-            samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
-            samples_Z = np_random.normal(loc=Mu_Z, scale=Sigma_Z, size=(num_samples, *Mu_Z.shape))
-            return (samples, samples_Z)
-        else:
-            raise NotImplementedError(f"The _stack method is not yet implemented for mode {self.mode}.")
+        Mu, logStDev = self._unstack(self.params)
+        Sigma = np.exp(logStDev)**2
+        # Use means and variances to generate samples from proposal distributions:
+        samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
+        return samples
     
     def save_state(self, filepath, replace=False):
         # Get histories (as lists of lists):
