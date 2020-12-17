@@ -537,6 +537,7 @@ class BBVI:
         Mu_init_Z=None, Sigma_init_Z=None,
         num_samples=1_000, step_size=0.1, num_iters=1_000,
         random_seed=None, progress=False,
+        wb_settings=False,
     ):
         """
         Initialize BBVI.
@@ -578,7 +579,73 @@ class BBVI:
         
         progress :
             Number of iterations at which to print progress updates (or False).
+
+        wb_settings:
+            (False or dict) Settings for logging to Weights & Biases (optional).
+            entity: Username of the project host (by default, uses gpestre/am207 shared project).
+            project: Name of the project (by default, uses gpestre/am207 shared project).
+            group: Name of the group (e.g. bbvi_bnn_lv) 
+            name: Short name for this particular run.
+            notes: Short note describing the tuning for this particular run.
+                (Note: The full dictionary of hyperparameters will also be uploaded.)
+            save_code: Whether or not to upload a copy of the script/notebook BBVI was called run from.
+                (If True, also requires allowing code uploads in the settings of your W&B account.)
+            [The options above are sent to DeepNote's init function -- see here: https://docs.wandb.com/library/init .]
+            [The options below are additional parameters for uploading samples and performance metrics to W&B .]
+            progress: Integer indicating how often to update progress (e.g. every 1000 steps).
+            base_path: Local directory where samples will be saved before W&B upload.
+                (If blank, uses the folder wandb creates for this run;
+                the default is a good choice, but does not seem to work on DeepNote.)
+            filename: Name of the file the BBVI parameters/state are dumped to (default: "bbvi_state.json").
+            archive: A static dictionary of params/values to archive (e.g. info about the priors).
+                (These are logged as hyperparameters addition to the BBVI intialization parameters).
+            callback: A callback function that is run at every wandb checkpoint (e.g. for drawing plots).
+                The function expects the BBVI instance as its only parameter.
+                (Note that it can access the `.base_path` property.)
         """
+
+        # Initialize W & B logging (optional):
+        self.wb_settings = wb_settings
+        self.wb_progress = None if (not self.wb_settings) or ('progress' not in wb_settings) else wb_settings['progress']
+        if self.wb_settings is not False:
+            # Create a dictionary of hyperparameters:
+            config = dict() if 'archive' not in wb_settings else wb_settings['archive']
+            config.update({
+                'mode' : mode,
+                'num_samples' : num_samples,
+                'step_size' : step_size,
+                'num_iters' : num_iters,
+                'random_seed' : random_seed,
+                'Mu_init' : Mu_init,
+                'Sigma_init' : Sigma_init,
+                'Mu_init_Z' : Mu_init_Z,
+                'Sigma_init_Z' : Sigma_init_Z,
+            })
+            # Define helper function:
+            def get_wb_setting(key, default):
+                if key in wb_settings.keys():
+                    return wb_settings[key]
+                return default
+            # Initialize a W&B run:
+            wandb.init(
+                entity    = get_wb_setting(key='entity', default='gpestre'),
+                project   = get_wb_setting(key='project', default='am207'),
+                group     = get_wb_setting(key='group', default='bbvi'),
+                name      = get_wb_setting(key='name', default='bbvi'),
+                save_code = get_wb_setting(key='save_code', default=False),
+                notes     = get_wb_setting(key='notes', default=None),
+                config    = config,  # Dictionary of the hyperparameters.
+            )
+            # Define filename and directory for saving samples/state:
+            # Note: By default, wb_base_path is a local folder created automatically by W&B for this run
+            #       but for some reason this causes issues when running on DeepNote,
+            #       so the use can also specify some other local folder in wb_settings.
+            self.wb_base_path = wandb.run.dir if 'base_path' not in self.wb_settings else self.wb_settings['base_path']
+            # Save HMC samples/state:
+            self.wb_filename = "bbvi_state.json" if 'filename' not in self.wb_settings else self.wb_settings['filename']
+            self.wb_filepath = os.path.join(self.wb_base_path, self.wb_filename)
+            # Bind the W&B module to the instance, for use in callback (e.g. for plotting progress):
+            self.wandb = wandb
 
         # Check mode:
         valid_modes = {'BNN','BNN_LV'}
@@ -782,6 +849,32 @@ class BBVI:
             print(printout)
             #print("params :",params)
             #print("gradient :",gradient)
+        # Log progress to W&B (optional):
+        if self.wb_progress and (i % self.wb_progress == 0):
+            # Upload performance metrics:
+            wandb.log({
+                'params' : params,
+                'gradient' : gradient,
+                'elbo_value' : elbo_value,
+                'grad_mag' : grad_mag,
+            }, step=iteration+1)
+            # Save samples/state and upload them:
+            try:
+                self.save_state(self.wb_filepath, replace=True)  # Saves a json file locally.
+                wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
+            except Exception as e:
+                print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
+            # Callback function (for producing diagnostic plots):
+            callback = None if 'callback' not in self.wb_settings else self.wb_settings['callback']
+            if callback is not None:
+                try:
+                    if isinstance(callback, list):
+                        for func in callback:
+                            func(self)  # Pass the HMC object to the callback function.
+                    else:
+                        callback(self)  # Pass the HMC object to the callback function.
+                except Exception as e:
+                    print(f"Callback failed at step {i}.\n\t{e}")
 
     def gaussian_entropy(self, logStDev):
         """
@@ -865,6 +958,20 @@ class BBVI:
         if self.progress:
             print("Finished in {:,} seconds".format(int(seconds)))
         self.seconds += seconds  # Increment timer.
+
+        # Finish W&B logging:
+        if self.wb_settings:
+            # Save final state:
+            try:
+                self.save_state(self.wb_filepath, replace=True)  # Saves a json file locally.
+                wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
+            except Exception as e:
+                print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
+            # Finish run:
+            try:
+                wandb.run.finish()
+            except:
+                print("W & B run already ended. (Should only happen if .sample() is called more than once.)")
         
         # Convert results to numpy arrays:
         self.params_hist = np.vstack(self.params_hist)
