@@ -448,7 +448,8 @@ class BNN_LV(BNN):
                 Z = input_noise
                 assert Z.shape == Z_shape
             except:
-                raise ValueError(f"Expected an tensor-like object with shape {Z_shape} .")
+                wrong_shape = input_noise.shape if hasattr(input_noise, 'shape') else {type(input_noise)}
+                raise ValueError(f"Expected a tensor-like object with shape {Z_shape} , not {wrong_shape}.")
         self.last_input_noise = Z  # Store last noise for access during training.
         X_ = np.append(X,Z, axis=-1)
         return X_
@@ -474,7 +475,8 @@ class BNN_LV(BNN):
                 Eps = output_noise
                 assert Eps.shape == Eps_shape
             except:
-                raise ValueError(f"Expected an tensor-like object with shape {Eps_shape} .")
+                wrong_shape = output_noise.shape if hasattr(output_noise, 'shape') else {type(output_noise)}
+                raise ValueError(f"Expected a tensor-like object with shape {Eps_shape} , not {wrong_shape}.")
         self.last_output_noise = Eps  # Store last noise for access during training.
         Y = Y_ + Eps
         return Y
