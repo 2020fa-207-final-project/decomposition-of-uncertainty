@@ -41,6 +41,8 @@ In summary:
 - L: number of latent noise inputs.
 """
 
+import inspect
+import re
 
 from autograd import numpy as np
 from autograd import grad
@@ -120,6 +122,64 @@ class BayesianModel:
     
     def log_posterior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
+
+    def info(self):
+        info = {
+            'L' : self.L,
+            'N' : self.N,
+            'M' : self.M,
+            'K' : self.K,
+            'D' : self.D,
+        }
+        return info
+
+    def description(self, indent=0):
+        description = ""
+        for param_name in [
+            'prior_weights_mean',
+            'prior_weights_stdev',
+            'prior_latents_mean',
+            'prior_latents_stdev',
+            'likelihood_stdev',
+            'output_noise_stdev',
+        ]:
+            param_value = getattr(self, param_name)
+            description += f"    {param_name} = {param_value}\n"
+        description += "\n"
+        for func_name in [
+            'log_prior',
+            'log_likelihood',
+            'log_posterior',
+        ]:
+            func_code = inspect.getsource(getattr(self, func_name))
+            func_code = re.sub(f"{func_name}\(self, *", f"{func_name}(", func_code)
+            description += func_code + '\n'
+        description = re.sub(f'self\.','',description)
+        description = description.replace('\n', '\n'+indent*'\t')
+        return description
+
+    def describe(self, indent=0):
+        print(self.description(indent=indent))
+
+    def display(self):
+        from IPython.display import display, Math
+        prior_weights_mean = np.round(self.prior_weights_mean, 3)
+        prior_weights_stdev = np.round(self.prior_weights_stdev, 3)
+        prior_latents_mean = np.round(self.prior_latents_mean, 3)
+        prior_latents_stdev = np.round(self.prior_latents_stdev, 3)
+        likelihood_stdev = np.round(self.likelihood_stdev, 3)
+        output_noise_stdev = np.round(self.output_noise_stdev, 3)
+        s = "" if self.label is None else "\\textbf{{{} :}}\\\\".format(self.label)
+        s += "W \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_weights_mean, prior_weights_stdev**2 )
+        s += "Z \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_latents_mean, prior_latents_stdev**2 )
+        s += "Y|W,Z \\;\\sim\\; N(\\; g_W(X),\\; {}\\; ) + N( 0, {} ) \\\\".format( likelihood_stdev**2, output_noise_stdev**2 )
+        s += "W,Z|Y \\;\\sim\\; ? \\;\\rightarrow\\; \\text{{BNN LV}} \\\\".format()
+        s = Math(s)
+        display(s)
+
+    def _repr_html_(self):
+        self.display()
+        
     
 class SamplerModel:
 
@@ -230,14 +290,13 @@ class SamplerModel:
         return self.model.log_posterior(W=W, Z=Z)
 
     def info(self):
-        info = {
-            'L' : self.L,
-            'N' : self.N,
-            'M' : self.M,
-            'K' : self.K,
-            'D' : self.D,
-        }
-        return info
+        return self.model.info()
+    
+    def description(self, indent=0):
+        return self.model.description(indent=indent)
+    
+    def describe(self, indent=0):
+        self.model.describe(indent=indent)
 
     def display(self):
         from IPython.display import display, Math
@@ -257,6 +316,12 @@ class SamplerModel:
 
     def _repr_html_(self):
         self.display()
+
+    def display(self):
+        self.model.display()
+
+    def _repr_html_(self):
+        self.model._repr_html_()
 
 
 class BNN:
