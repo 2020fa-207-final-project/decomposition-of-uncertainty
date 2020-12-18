@@ -515,7 +515,7 @@ class BNN:
             objective_val = objective(weights, iteration)
             self.objective_trace = np.vstack((self.objective_trace, objective_val))
             self.weight_trace = np.vstack((self.weight_trace, weights))
-            if iteration % check_point == 0:
+            if (check_point is not None) and (iteration % check_point == 0):
                 print("Iteration {} lower bound {}; gradient mag: {}".format(iteration, objective_val, np.linalg.norm(obj_gradient(weights, iteration))))
 
     
