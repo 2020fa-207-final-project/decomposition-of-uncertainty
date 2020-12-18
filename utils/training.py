@@ -366,14 +366,15 @@ class HMC:
                 except Exception as e:
                     print(f"Failed to save {self.wb_filepath} at step {i}.\n\t{e}")
                 # Callback function (for producing diagnostic plots):
+            if self.wb_progress:
                 callback = None if 'callback' not in self.wb_settings else self.wb_settings['callback']
                 if callback is not None:
                     try:
                         if isinstance(callback, list):
                             for func in callback:
-                                func(self)  # Pass the HMC object to the callback function.
+                                func(self, iteration=i)  # Pass the BBVI object to the callback function.
                         else:
-                            callback(self)  # Pass the HMC object to the callback function.
+                            callback(self, iteration=i)  # Pass the BBVI object to the callback function.
                     except Exception as e:
                         print(f"Callback failed at step {i}.\n\t{e}")
 
@@ -694,15 +695,16 @@ class BBVI:
                 wandb.save(self.wb_filepath, base_path=self.wb_base_path)  # Uploads the file to W&B.
             except Exception as e:
                 print(f"Failed to save {self.wb_filepath} at step {iteration+1}.\n\t{e}")
+        if self.wb_progress:
             # Callback function (for producing diagnostic plots):
             callback = None if 'callback' not in self.wb_settings else self.wb_settings['callback']
             if callback is not None:
                 try:
                     if isinstance(callback, list):
                         for func in callback:
-                            func(self)  # Pass the HMC object to the callback function.
+                            func(self, iteration=iteration+1)  # Pass the HMC object to the callback function.
                     else:
-                        callback(self)  # Pass the HMC object to the callback function.
+                        callback(self, iteration=iteration+1)  # Pass the HMC object to the callback function.
                 except Exception as e:
                     print(f"Callback failed at step {iteration+1}.\n\t{e}")
 
@@ -801,7 +803,10 @@ class BBVI:
     def params(self):
         if len(self.params_hist) == 0:
             return None
-        return self.params_hist[-1]
+        elif isinstance(self.params_hist, list):
+            return self.params_hist[-1]
+        else:
+            return self.params_hist[-1,:].reshape(1,-1)
 
     def get_samples(self, num=None, seed=None):
         # Determine how many samples to get: 
@@ -891,14 +896,16 @@ class BBVI:
         return Mu, Sigma
 
 
-def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwargs):
+def build_wb_callback_plotfunc(plot_func, filename='posterior_predictive', interval=100, **kwargs):
     """
     Wrap a plotting function to produce plots for logging to Weights & Biases during HMC sampling.
     Assumes the function takes a `samples` argument (S by D array) and returns pyplot axes.
     The rest of the keyword arguments are passed directly to the plotting function.
     """
     assert 'samples' not in kwargs, "No need to provide `samples`, as they will be extracted from current HMC state."
-    def callback(sampler):
+    def callback(sampler, iteration):
+        if iteration % interval == 0:
+            return
         filepath = os.path.join(sampler.wb_base_path, filename+'.png')
         samples = sampler.get_samples()  # Get samples from sampler.
         samples = np.vstack(samples)  # Convert to numpy array.
@@ -916,7 +923,7 @@ def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwarg
     return callback
 
 
-def build_wb_callback_postpred(sampler_model, x_data):
+def build_wb_callback_postpred(sampler_model, x_data, interval=100):
     """
     Build a callback function that produces a scatterplot of the posterior predictive
     for Weights and Biases.
@@ -928,7 +935,9 @@ def build_wb_callback_postpred(sampler_model, x_data):
     if not hasattr(sampler_model, 'predict'):
         raise ValueError("Expects a SamplerModel object.")
     x_data = np.array(x_data).flatten().reshape(-1,1)
-    def wb_post_pred(sampler):
+    def callback(sampler, iteration):
+        if iteration % interval == 0:
+            return
         samples = sampler.get_samples()  # Get samples from sampler.
         samples = np.vstack(samples)  # Convert to numpy array.
         S = samples.shape[0]  # Get number of models.
@@ -943,4 +952,4 @@ def build_wb_callback_postpred(sampler_model, x_data):
             print(f"Callback: Built plot with {samples.shape[0]} samples.")
         else:
             print(f"Callback: No samples to plot.")
-    return wb_post_pred
+    return callback
