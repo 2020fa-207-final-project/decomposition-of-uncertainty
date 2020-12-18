@@ -209,9 +209,9 @@ class BNN:
         if len(W.shape)==1:
             W = W.reshape(1,-1)
         elif len(W.shape)==2:
-            assert W.shape[1] == self.D, "Second dimension must match number of weights."
+            assert W.shape[1] == self.D, f"Second dimension of W ({W.shape[1]}) must match number of weights ({self.D}); W.shape={W.shape} ."
         else:
-            raise ValueError("W should be S-by-D or 1-by-D (i.e. max 2 dimenisions).")
+            raise ValueError(f"W should be S-by-D or 1-by-D (i.e. max 2 dimenisions), not {W.shape}")
         
         # Determine how many sets of weights we have:
         S = W.shape[0]
@@ -320,7 +320,15 @@ class BNN:
         an arbitrary dimensions instead of N (as long as M is the last dimension).
         The K outputs will be along the last dimension (with prior dimensions
         matching those of X, i.e. the typical output will be an N-by-K matrix).
+
+        The current implementation requires either R=1 or R=S
+        (i.e. if multiple datasets are provided, there must be a corresponding number of weights).
+        This allows vectorization over S models.
         '''
+        # Get weights:
+        W = self.weights if weights is None else weights
+        # Check W dimensions:
+        assert len(W.shape)==2, f"W should be S by D matrix., not {W.shape}"
         # Check X dimensions:
         if len(X.shape) < 2:
             raise ValueError(f"X should be (at least) 2 dimensional; X.shape={X.shape}.")
@@ -329,16 +337,31 @@ class BNN:
         R = X.shape[:-2]  # Arbitrary dimensions that precede the number of rows (N) and features (M).
         assert X.shape[-1]==self.M, f"Last dimenion of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
         # Raise implementation error if there is more than a single 2D dataset:
-        if len(R)>0:
+        if len(R)==0:
+            R = 1
+            X = X.reshape(1,*X.shape)  # Add R=1 as first demension to get 3 dimensions.
+        elif len(R)==1:
+            R = R[0]  # Get single value out of tuple.
+        else:
             raise NotImplementedError(f"Current implementation does not support datasets of aritrary dimension, must be N-by-M; X.shape={X.shape}.")
+
+        # Make there are the same number of sets (or 1) of weights and datasets:
+        S = W.shape[0]
+        assert (S==R) or (S==1) or (R==1), f"If either stack has more that 1 input, they must both has the same number -- incompatible shapes: {W.shape} and {X.shape}."
+        # Use S to refer to larger stack size and ignore R:
+        S = max(S,R)
+        del R
+        # Broadcast both inputs to have size S:
+        if W.shape[0]<S:
+            W = np.tile(W, reps=(S,1))  # Repeat S times along first axis and preserve other axis (D).
+        if X.shape[0]<S:
+            X = np.tile(X, reps=(S,1,1))  # Repeat S times along first axis and preserve other axes (N and M).
         
         # Get weights for each layer (as tensors):
-        weights = self.weights if weights is None else weights
-        W_layers = self.unstack_weights(W=weights)
+        W_layers = self.unstack_weights(W=W)
 
         # Determine shape of output:
-        S = weights.shape[0]  # Number of different models represented.
-        Y_shape = tuple([ S, *X.shape[:-1], self.layers['output_n'] ])  # Determine shape of output.
+        Y_shape = tuple([*X.shape[:-1], self.layers['output_n'] ])  # Determine shape of output.
 
         # Copy data to values to iterate through the network
         try:
@@ -571,6 +594,9 @@ class BayesianModel:
         self.likelihood_stdev = likelihood_stdev
         self.latent_gamma = latent_gamma
         self.latent_sigma = latent_sigma
+
+    def predict(self, W, Z):
+        return self.nn.forward(X=self.X, weights=W, input_noise=Z)
         
     def log_prior_weights(self, W):
         mu = self.prior_weights_mean
@@ -586,11 +612,9 @@ class BayesianModel:
         return self.log_prior_weights(W) + self.log_prior_latents(Z)
     
     def log_likelihood(self, W, Z):
-        X = self.X
-        Y = self.Y
-        mu = self.nn.forward(X, weights=W, input_noise=Z)
+        mu = self.nn.forward(X=self.X, weights=W, input_noise=Z)
         sigma = self.likelihood_stdev
-        return np.sum(log_gaussian(x=Y, mu=mu, sigma=sigma), axis=0)
+        return np.sum(log_gaussian(x=self.Y, mu=mu, sigma=sigma), axis=0)
     
     def log_posterior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
