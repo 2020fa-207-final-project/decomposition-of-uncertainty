@@ -450,61 +450,6 @@ class HMC:
         print(f"Loaded HMC state : {filepath} .")
 
 
-def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwargs):
-    """
-    Wrap a plotting function to produce plots for logging to Weights & Biases during HMC sampling.
-    Assumes the function takes a `samples` argument (S by D array) and returns pyplot axes.
-    The rest of the keyword arguments are passed directly to the plotting function.
-    """
-    assert 'samples' not in kwargs, "No need to provide `samples`, as they will we extract from current HMC state."
-    def callback(sampler):
-        filepath = os.path.join(sampler.wb_base_path, filename+'.png')
-        samples = sampler.get_samples()  # Get samples from sampler.
-        samples = np.vstack(samples)  # Convert to numpy array.
-        S = samples.shape[0]  # Get number of models.
-        if S>0:
-            kwargs['samples'] = samples  # Add samples to keyword arguments.
-            ax = plot_func(**kwargs)  # Call plotting function.
-            ax.figure.savefig(filepath)  # Save plot locally.
-            sampler.wandb.save(filepath, base_path=sampler.wb_base_path)  # Upload plot file to W&B.
-            img = Image.open(filepath)  # Load image as array.
-            sampler.wandb.log({filename:[sampler.wandb.Image(img, caption=filename)]})
-            print(f"Callback: Saved plot {filepath} ({samples.shape[0]} samples).")
-        else:
-            print(f"Callback: No samples to plot.")
-    return callback
-
-
-def build_wb_callback_postpred(sampler_model, x_data):
-    """
-    Build a callback function that produces a scatterplot of the posterior predictive
-    for Weights and Biases.
-    model:
-        A SamplerModel object.
-    x_data:
-        The X values to plot (vector of length N; or )
-    """
-    if not hasattr(sampler_model, 'predict'):
-        raise ValueError("Expects a SamplerModel object.")
-    x_data = np.array(x_data).flatten().reshape(-1,1)
-    def wb_post_pred(sampler):
-        samples = sampler.get_samples()  # Get samples from sampler.
-        samples = np.vstack(samples)  # Convert to numpy array.
-        S = samples.shape[0]  # Get number of models.
-        if S>0:
-            y_pred = sampler_model.predict(X=x_data, samples=samples)
-            x_vals = np.tile(x_data, reps=(S,1,1))
-            assert y_pred.shape == x_vals.shape
-            # Build W&B table and plot:
-            data = [[x, y] for (x, y) in zip(x_vals.flatten(), y_pred.flatten())]
-            table = sampler.wandb.Table(data=data, columns = ["class_x", "class_y"])
-            sampler.wandb.log({"posterior_predictic" : sampler.wandb.plot.scatter(table, "class_x", "class_y")})
-            print(f"Callback: Built plot with {samples.shape[0]} samples.")
-        else:
-            print(f"Callback: No samples to plot.")
-    return wb_post_pred
-    
-
 class BBVI:
 
     """
@@ -944,3 +889,58 @@ class BBVI:
         if to_square:
             Sigma = np.apply_along_axis(func1d=np.diag, arr=Sigma, axis=-1)
         return Mu, Sigma
+
+
+def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwargs):
+    """
+    Wrap a plotting function to produce plots for logging to Weights & Biases during HMC sampling.
+    Assumes the function takes a `samples` argument (S by D array) and returns pyplot axes.
+    The rest of the keyword arguments are passed directly to the plotting function.
+    """
+    assert 'samples' not in kwargs, "No need to provide `samples`, as they will be extracted from current HMC state."
+    def callback(sampler):
+        filepath = os.path.join(sampler.wb_base_path, filename+'.png')
+        samples = sampler.get_samples()  # Get samples from sampler.
+        samples = np.vstack(samples)  # Convert to numpy array.
+        S = samples.shape[0]  # Get number of models.
+        if S>0:
+            kwargs['samples'] = samples  # Add samples to keyword arguments.
+            ax = plot_func(**kwargs)  # Call plotting function.
+            ax.figure.savefig(filepath)  # Save plot locally.
+            sampler.wandb.save(filepath, base_path=sampler.wb_base_path)  # Upload plot file to W&B.
+            img = Image.open(filepath)  # Load image as array.
+            sampler.wandb.log({filename:[sampler.wandb.Image(img, caption=filename)]})
+            print(f"Callback: Saved plot {filepath} ({samples.shape[0]} samples).")
+        else:
+            print(f"Callback: No samples to plot.")
+    return callback
+
+
+def build_wb_callback_postpred(sampler_model, x_data):
+    """
+    Build a callback function that produces a scatterplot of the posterior predictive
+    for Weights and Biases.
+    model:
+        A SamplerModel object.
+    x_data:
+        The X values to plot (vector of length N; or )
+    """
+    if not hasattr(sampler_model, 'predict'):
+        raise ValueError("Expects a SamplerModel object.")
+    x_data = np.array(x_data).flatten().reshape(-1,1)
+    def wb_post_pred(sampler):
+        samples = sampler.get_samples()  # Get samples from sampler.
+        samples = np.vstack(samples)  # Convert to numpy array.
+        S = samples.shape[0]  # Get number of models.
+        if S>0:
+            y_pred = sampler_model.predict(X=x_data, samples=samples)
+            x_vals = np.tile(x_data, reps=(S,1,1))
+            assert y_pred.shape == x_vals.shape
+            # Build W&B table and plot:
+            data = [[x, y] for (x, y) in zip(x_vals.flatten(), y_pred.flatten())]
+            table = sampler.wandb.Table(data=data, columns = ["class_x", "class_y"])
+            sampler.wandb.log({"posterior_predictic" : sampler.wandb.plot.scatter(table, "class_x", "class_y")})
+            print(f"Callback: Built plot with {samples.shape[0]} samples.")
+        else:
+            print(f"Callback: No samples to plot.")
+    return wb_post_pred
