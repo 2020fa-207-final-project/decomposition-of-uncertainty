@@ -13,10 +13,18 @@ def plot_posterior_predictive(x_data, model, samples, mode='points', ax=None, fi
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
 
-    y_pred = model.forward(x_data, samples)
-
+    # y_pred = model.forward(x_data, samples)
+    y_pred = []
+    # Loop through the samples of weights
+    for i in range(samples.shape[0]):
+        # Create the same NN for predictions but with weights from the samples
+        w_cur = samples[i,:]
+        y_pred_i = model.forward(x_data.reshape(-1,1), w_cur)
+        y_pred.append(y_pred_i.reshape(-1))
+    y_pred = np.array(y_pred)
+    
     if mode == 'points':
-        y_pred_flat = y_pred.reshape(-1)
+        y_pred_flat = y_pred.flatten()
         x_data_flat = np.repeat(x_data, samples.shape[0], axis=-1).reshape(-1, order='F')
 
         ax.scatter(x_data_flat, y_pred_flat, color='b', alpha=0.15, s=2, label = 'posterior predictive samples')
