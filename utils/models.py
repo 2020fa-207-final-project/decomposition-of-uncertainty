@@ -41,10 +41,288 @@ In summary:
 - L: number of latent noise inputs.
 """
 
+import inspect
+import re
 
 from autograd import numpy as np
 from autograd import grad
 from autograd.misc.optimizers import adam
+
+from utils.functions import log_gaussian
+
+
+class BayesianModel:
+
+    """
+    A Bayesian model for BNN LV.
+    """
+    
+    def __init__(
+        self,
+        X, Y, nn,
+        prior_weights_mean = 0.0,
+        prior_weights_stdev = 1.0,
+        prior_latents_mean = 0.0,
+        prior_latents_stdev = 1.0,
+        likelihood_stdev = 1.0,
+        output_noise_stdev = 1.0,
+        label = '',
+    ):
+        
+        # Check inputs:
+        assert len(X.shape)==2, f"Expects X to be N by M, not {X.shape}"
+        assert len(Y.shape)==2, f"Expects Y to be N by K, not {Y.shape}"
+        assert X.shape[0]==Y.shape[0], f"Expects X {X.shape} and Y {Y.shape} to have same first dimension."
+        
+        # Get dimensions:
+        self.L = 1
+        self.N = X.shape[0]
+        self.M = X.shape[1]
+        self.K = Y.shape[1]
+        self.D = nn.D
+        
+        # Store parameters:
+        self.X = X
+        self.Y = Y
+        self.nn = nn
+        self.prior_weights_mean = prior_weights_mean
+        self.prior_weights_stdev = prior_weights_stdev
+        self.prior_latents_mean = prior_latents_mean
+        self.prior_latents_stdev = prior_latents_stdev
+        self.likelihood_stdev = likelihood_stdev
+        self.output_noise_stdev = output_noise_stdev
+        self.label = label
+
+    @staticmethod
+    def sum_over_samples(tensor):
+        # Helper: Sum across all by the first dimension:
+        num_samples = tensor.shape[0]
+        return np.sum( tensor.reshape(num_samples,-1), axis=-1)
+
+    def predict(self, X, W):
+        return self.nn.forward(X=X, weights=W, input_noise='auto', output_noise='auto')
+        
+    def log_prior_weights(self, W):
+        mu = self.prior_weights_mean
+        sigma = self.prior_weights_stdev
+        return self.sum_over_samples( log_gaussian(x=W, mu=mu, sigma=sigma) )
+    
+    def log_prior_latents(self, Z):
+        mu = self.prior_latents_mean
+        sigma = self.prior_latents_stdev
+        return self.sum_over_samples( log_gaussian(x=Z, mu=mu, sigma=sigma) )
+        
+    def log_prior(self, W, Z):
+        return self.log_prior_weights(W) + self.log_prior_latents(Z)
+    
+    def log_likelihood(self, W, Z):
+        mu = self.nn.forward(X=self.X, weights=W, input_noise=Z)
+        sigma = self.likelihood_stdev
+        return self.sum_over_samples( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+    
+    def log_posterior(self, W, Z):
+        return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
+
+    def info(self):
+        info = {
+            'L' : self.L,
+            'N' : self.N,
+            'M' : self.M,
+            'K' : self.K,
+            'D' : self.D,
+        }
+        return info
+
+    def description(self, indent=0):
+        description = ""
+        for param_name in [
+            'prior_weights_mean',
+            'prior_weights_stdev',
+            'prior_latents_mean',
+            'prior_latents_stdev',
+            'likelihood_stdev',
+            'output_noise_stdev',
+        ]:
+            param_value = getattr(self, param_name)
+            description += f"    {param_name} = {param_value}\n"
+        description += "\n"
+        for func_name in [
+            'log_prior',
+            'log_likelihood',
+            'log_posterior',
+        ]:
+            func_code = inspect.getsource(getattr(self, func_name))
+            func_code = re.sub(f"{func_name}\(self, *", f"{func_name}(", func_code)
+            description += func_code + '\n'
+        description = re.sub(f'self\.','',description)
+        description = description.replace('\n', '\n'+indent*'\t')
+        return description
+
+    def describe(self, indent=0):
+        print(self.description(indent=indent))
+
+    def display(self):
+        from IPython.display import display, Math
+        prior_weights_mean = np.round(self.prior_weights_mean, 3)
+        prior_weights_stdev = np.round(self.prior_weights_stdev, 3)
+        prior_latents_mean = np.round(self.prior_latents_mean, 3)
+        prior_latents_stdev = np.round(self.prior_latents_stdev, 3)
+        likelihood_stdev = np.round(self.likelihood_stdev, 3)
+        output_noise_stdev = np.round(self.output_noise_stdev, 3)
+        s = "" if self.label is None else "\\textbf{{{} :}}\\\\".format(self.label)
+        s += "W \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_weights_mean, prior_weights_stdev**2 )
+        s += "Z \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_latents_mean, prior_latents_stdev**2 )
+        s += "Y|W,Z \\;\\sim\\; N(\\; g_W(X),\\; {}\\; ) + N( 0, {} ) \\\\".format( likelihood_stdev**2, output_noise_stdev**2 )
+        s += "W,Z|Y \\;\\sim\\; ? \\;\\rightarrow\\; \\text{{BNN LV}} \\\\".format()
+        s = Math(s)
+        display(s)
+
+    def _repr_html_(self):
+        self.display()
+        
+    
+class SamplerModel:
+
+    """
+    A wrapper for connecting a Bayesian model to a sampler,
+    which stacks weights and latent variables in a single `samples` matrix
+    (S by (1*D+N*L)) that includes both model weights and latent variables.
+    """
+    
+    def __init__(
+        self,
+        model,  # BayesianModel object.
+    ):
+        
+        # Store wrapped model:
+        self.model = model
+
+        # Get properties of wrapped model:
+        self.label = model.label
+        self.X = model.X
+        self.Y = model.Y
+        self.nn = model.nn
+        
+        # Store dimensions of wrapped model:
+        self.L = model.L
+        self.N = model.N
+        self.M = model.M
+        self.K = model.K
+        self.D = model.D
+        
+        # Store functions of wrapped model:
+        self._log_prior = model.log_prior
+        self._log_likelihood = model.log_likelihood
+        self._log_posterior = model.log_posterior
+    
+    def stack(self, W, Z):
+        if len(Z.shape)==2:
+            assert (len(W.shape)==2), f"Expects an S by D matrix, not {W.shape}"
+            assert Z.shape[0]==self.N, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
+            assert Z.shape[1]==self.L, f"In 2D case, expects N ({self.N}) by L ({self.L}) matrix, not {Z.shape}"
+            Z = Z.reshape(1,*Z.shape)  # Add S=1 as first dimension.
+        elif len(Z.shape)==3:
+            assert (len(W.shape)==2), f"Expects an S by D matrix, not {W.shape}"
+            assert Z.shape[-2]==self.N, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
+            assert Z.shape[-1]==self.L, f"In 3D case, expects S by N ({self.N}) by L ({self.L}) tensor, not {Z.shape}"
+        else:
+            raise NotImplementedError(f"Z should be two (N by L) or three (S by N by L) dimensions, not {Z.shape}")
+        # Make sure both inputs have the same number of samples (or 1):
+        S = max(W.shape[0],Z.shape[0])
+        if (W.shape[0] not in {1,S}) or (Z.shape[0] not in {1,S}):
+            ValueError(f"If either input has more than one sample, they must both has the same number; received {W.shape[0]} and {Z.shape[0]}.")
+        # Broadcast both inputs to have size S:
+        if W.shape[0]<S:
+            assert W.shape[0]==1, f"W and Z must have same number of samples or 1 sample, but cannot broadcast two different size: {W.shape[0]} and {Z.shape[0]}"
+            W = np.tile(W, reps=(S,1))  # Repeat S times along first axis and preserve other axis (D).
+        if Z.shape[0]<S:
+            assert Z.shape[0]==1, f"W and Z must have same number of samples or 1 sample, but cannot broadcast two different size: {W.shape[0]} and {Z.shape[0]}"
+            Z = np.tile(Z, reps=(S,1,1))  # Repeat S times along first axis and preserve other axes (N and L).
+        # Reshape and concatenate:
+        W_flat = W.reshape(S,self.D)
+        Z_flat = Z.reshape(S,self.N*self.L)
+        samples = np.concatenate([W_flat,Z_flat],axis=-1)  # Create 1 by (1*D+N*L) matrix.
+        return samples
+    
+    def unstack(self, samples):
+        assert len(samples.shape)==2, f"Expects samples to be 2 dimenional."
+        assert samples.shape[1]==(1*self.D)+(self.N*self.L), f"Expects samples to have a value for each weight and a value for each data point for each latent feature."
+        S = samples.shape[0]
+        if S==1:
+            W = samples[:,:self.D].reshape(1,self.D)
+            Z = samples[:,self.D:].reshape(self.N,self.L)  # 2 dimensions.
+        else:
+            W = samples[:,:self.D].reshape(S,self.D)
+            Z = samples[:,self.D:].reshape(S,self.N,self.L)  # 3 dimensions.
+        return W, Z
+
+    def vectorize(self, func, W, Z):
+        assert len(Z.shape)==3, "Vectorization is only defined for 3 dimension case."
+        results = np.array([
+            func(w.reshape(1,-1), z)
+            for w, z in zip(W,Z)
+        ]).flatten()
+        assert len(results)==Z.shape[0], f"Vectorization over S samples had unexpected results: {results} ."
+        return results
+
+    def predict(self, X, samples):
+        W, _ = self.unstack(samples)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.predict, W=W, Z=Z)
+        return self.model.predict(X=X, W=W)
+        
+    def log_prior(self, samples):
+        W, Z = self.unstack(samples)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_prior, W=W, Z=Z)
+        return self.model.log_prior(W=W, Z=Z)
+    
+    def log_likelihood(self, samples):
+        W, Z = self.unstack(samples)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_likelihood, W=W, Z=Z)
+        return self.model.log_likelihood(W=W, Z=Z)
+    
+    def log_posterior(self, samples):
+        W, Z = self.unstack(samples)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_posterior, W=W, Z=Z)
+        return self.model.log_posterior(W=W, Z=Z)
+
+    def info(self):
+        return self.model.info()
+    
+    def description(self, indent=0):
+        return self.model.description(indent=indent)
+    
+    def describe(self, indent=0):
+        self.model.describe(indent=indent)
+
+    def display(self):
+        from IPython.display import display, Math
+        prior_weights_mean = np.round(self.model.prior_weights_mean, 3)
+        prior_weights_stdev = np.round(self.model.prior_weights_stdev, 3)
+        prior_latents_mean = np.round(self.model.prior_latents_mean, 3)
+        prior_latents_stdev = np.round(self.model.prior_latents_stdev, 3)
+        likelihood_stdev = np.round(self.model.likelihood_stdev, 3)
+        output_noise_stdev = np.round(self.model.output_noise_stdev, 3)
+        s = "" if self.label is None else "\\textbf{{{} :}}\\\\".format(self.label)
+        s += "W \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_weights_mean, prior_weights_stdev**2 )
+        s += "Z \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_latents_mean, prior_latents_stdev**2 )
+        s += "Y|W,Z \\;\\sim\\; N(\\; g_W(X),\\; {}\\; ) + N( 0, {} ) \\\\".format( likelihood_stdev**2, output_noise_stdev**2 )
+        s += "W,Z|Y \\;\\sim\\; ? \\;\\rightarrow\\; \\text{{BNN LV}} \\\\".format()
+        s = Math(s)
+        display(s)
+
+    def _repr_html_(self):
+        self.display()
+
+    def display(self):
+        self.model.display()
+
+    def _repr_html_(self):
+        self.model._repr_html_()
+
 
 class BNN:
     """
@@ -84,7 +362,7 @@ class BNN:
         self.random = np.random.RandomState(seed)
 
         if weights is None:
-            self.weights = self.random.normal(0, 1, size=(1, self.D))
+            self.weights = self.random_weights()
         else:
             assert type(weights) == np.ndarray, "Error: Weights must be a numpy array"
             assert len(weights.shape) == 2, "Error: Weights must be specified as a 2D numpy array"
@@ -141,6 +419,9 @@ class BNN:
         layers_D.append(D - int(np.sum(layers_D)))
 
         return D, layers_D
+
+    def random_weights(self, S=1):
+        return self.random.normal(0, 1, size=(S, self.D))
 
     def stack_weights(self, W_layers):
         """
@@ -206,9 +487,9 @@ class BNN:
         if len(W.shape)==1:
             W = W.reshape(1,-1)
         elif len(W.shape)==2:
-            assert W.shape[1] == self.D, "Second dimension must match number of weights."
+            assert W.shape[1] == self.D, f"Second dimension of W ({W.shape[1]}) must match number of weights ({self.D}); W.shape={W.shape} ."
         else:
-            raise ValueError("W should be S-by-D or 1-by-D (i.e. max 2 dimenisions).")
+            raise ValueError(f"W should be S-by-D or 1-by-D (i.e. max 2 dimenisions), not {W.shape}")
         
         # Determine how many sets of weights we have:
         S = W.shape[0]
@@ -299,7 +580,7 @@ class BNN:
             objective_val = objective(weights, iteration)
             self.objective_trace = np.vstack((self.objective_trace, objective_val))
             self.weight_trace = np.vstack((self.weight_trace, weights))
-            if iteration % check_point == 0:
+            if (check_point is not None) and (iteration % check_point == 0):
                 print("Iteration {} lower bound {}; gradient mag: {}".format(iteration, objective_val, np.linalg.norm(obj_gradient(weights, iteration))))
 
     
@@ -317,7 +598,15 @@ class BNN:
         an arbitrary dimensions instead of N (as long as M is the last dimension).
         The K outputs will be along the last dimension (with prior dimensions
         matching those of X, i.e. the typical output will be an N-by-K matrix).
+
+        The current implementation requires either R=1 or R=S
+        (i.e. if multiple datasets are provided, there must be a corresponding number of weights).
+        This allows vectorization over S models.
         '''
+        # Get weights:
+        W = self.weights if weights is None else weights
+        # Check W dimensions:
+        assert len(W.shape)==2, f"W should be S by D matrix., not {W.shape}"
         # Check X dimensions:
         if len(X.shape) < 2:
             raise ValueError(f"X should be (at least) 2 dimensional; X.shape={X.shape}.")
@@ -326,16 +615,31 @@ class BNN:
         R = X.shape[:-2]  # Arbitrary dimensions that precede the number of rows (N) and features (M).
         assert X.shape[-1]==self.M, f"Last dimenion of X is {X.shape[-1]} but should correspond to {self.M} inputs (i.e. features)"
         # Raise implementation error if there is more than a single 2D dataset:
-        if len(R)>0:
+        if len(R)==0:
+            R = 1
+            X = X.reshape(1,*X.shape)  # Add R=1 as first demension to get 3 dimensions.
+        elif len(R)==1:
+            R = R[0]  # Get single value out of tuple.
+        else:
             raise NotImplementedError(f"Current implementation does not support datasets of aritrary dimension, must be N-by-M; X.shape={X.shape}.")
+
+        # Make there are the same number of sets (or 1) of weights and datasets:
+        S = W.shape[0]
+        assert (S==R) or (S==1) or (R==1), f"If either stack has more that 1 input, they must both has the same number -- incompatible shapes: {W.shape} and {X.shape}."
+        # Use S to refer to larger stack size and ignore R:
+        S = max(S,R)
+        del R
+        # Broadcast both inputs to have size S:
+        if W.shape[0]<S:
+            W = np.tile(W, reps=(S,1))  # Repeat S times along first axis and preserve other axis (D).
+        if X.shape[0]<S:
+            X = np.tile(X, reps=(S,1,1))  # Repeat S times along first axis and preserve other axes (N and M).
         
         # Get weights for each layer (as tensors):
-        weights = self.weights if weights is None else weights
-        W_layers = self.unstack_weights(W=weights)
+        W_layers = self.unstack_weights(W=W)
 
         # Determine shape of output:
-        S = weights.shape[0]  # Number of different models represented.
-        Y_shape = tuple([ S, *X.shape[:-1], self.layers['output_n'] ])  # Determine shape of output.
+        Y_shape = tuple([S,*X.shape[1:-1], self.layers['output_n'] ])  # Determine shape of output.
 
         # Copy data to values to iterate through the network
         try:
@@ -438,6 +742,7 @@ class BNN_LV(BNN):
             'zero' : No noise is added (i.e. adds columns of zeros instead of noise features).
             [tensor-like object] : Adds user-specified noise.
         """
+        assert len(X.shape) in {2,3}, "X must have 2 or 3 dimensions."
         Z_shape = tuple((*X.shape[:-1],self.L))
         if isinstance(input_noise, str) and input_noise=='auto':
             Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
@@ -446,11 +751,34 @@ class BNN_LV(BNN):
         else:
             try:
                 Z = input_noise
-                assert Z.shape == Z_shape
+                if len(Z.shape)==2:
+                    assert Z.shape == Z_shape
+                elif len(Z.shape)==3:
+                    assert Z.shape[1:] == Z_shape
+                else:
+                    raise ValueError
             except:
-                raise ValueError(f"Expected an tensor-like object with shape {Z_shape} .")
+                wrong_shape = input_noise.shape if hasattr(input_noise, 'shape') else {type(input_noise)}
+                raise ValueError(f"Expected a tensor-like object with shape {Z_shape} , not {wrong_shape}.")
         self.last_input_noise = Z  # Store last noise for access during training.
-        X_ = np.append(X,Z, axis=-1)
+        # If either X or Z is 3 dimensional, tile them so both stacks are the same size:
+        if len(X.shape)==3 or len(Z.shape)==3:
+            # Make both 3 dimensional:
+            if not len(X.shape)==3:
+                X = X.reshape(1,*X.shape)
+            if not len(Z.shape)==3:
+                Z = Z.reshape(1,*Z.shape)
+            # Get number of stacks:
+            S = max(X.shape[0],Z.shape[0])
+            assert X.shape[0] in {1,S}, f"If either X or Z is stacked, they must have the same stack size; cannot broadcast {X.shape} and {Z.shape}"
+            assert Z.shape[0] in {1,S}, f"If either X or Z is stacked, they must have the same stack size; cannot broadcast {X.shape} and {Z.shape}"
+            # Repeat one input if needed to get equal stacks:
+            if X.shape[0]<S:
+                X = np.tile(X, reps=(S,1,1))
+            if Z.shape[0]<S:
+                Z = np.tile(X, reps=(S,1,1))
+        # Augment X with Z:
+        X_ = np.concatenate([X,Z], axis=-1)
         return X_
     
     def add_output_noise(self,Y_, output_noise='auto'):
@@ -472,9 +800,15 @@ class BNN_LV(BNN):
         else:
             try:
                 Eps = output_noise
-                assert Eps.shape == Eps_shape
+                if len(Eps.shape)==2:
+                    assert Eps.shape == Eps_shape
+                elif len(Eps.shape)==3:
+                    assert Eps.shape[1:] == Eps_shape
+                else:
+                    raise ValueError
             except:
-                raise ValueError(f"Expected an tensor-like object with shape {Eps_shape} .")
+                wrong_shape = output_noise.shape if hasattr(output_noise, 'shape') else {type(output_noise)}
+                raise ValueError(f"Expected a tensor-like object with shape {Eps_shape} , not {wrong_shape}.")
         self.last_output_noise = Eps  # Store last noise for access during training.
         Y = Y_ + Eps
         return Y
