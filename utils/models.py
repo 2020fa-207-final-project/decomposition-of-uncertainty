@@ -668,7 +668,7 @@ class SamplerModel:
         self.model = model
 
         # Get properties of wrapped model:
-        self.label = label
+        self.label = model.label
         self.X = model.X
         self.Y = model.Y
         self.nn = model.nn
