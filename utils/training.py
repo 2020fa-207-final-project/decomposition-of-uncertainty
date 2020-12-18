@@ -459,9 +459,10 @@ def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwarg
     assert 'samples' not in kwargs, "No need to provide `samples`, as they will we extract from current HMC state."
     def callback(sampler):
         filepath = os.path.join(sampler.wb_base_path, filename+'.png')
-        if len(sampler.samples)>0:
-            samples = sampler.get_samples()  # Get samples from sampler.
-            samples = np.vstack(samples)  # Convert to numpy array.
+        samples = sampler.get_samples()  # Get samples from sampler.
+        samples = np.vstack(samples)  # Convert to numpy array.
+        S = samples.shape[0]  # Get number of models.
+        if S>0:
             kwargs['samples'] = samples  # Add samples to keyword arguments.
             ax = plot_func(**kwargs)  # Call plotting function.
             ax.figure.savefig(filepath)  # Save plot locally.
@@ -474,22 +475,24 @@ def build_wb_callback_plotfunc(plot_func,filename='posterior_predictive',**kwarg
     return callback
 
 
-def build_wb_callback_postpred(model, x_data):
+def build_wb_callback_postpred(sampler_model, x_data):
     """
     Build a callback function that produces a scatterplot of the posterior predictive
     for Weights and Biases.
     model:
-        A model with a `.forward(X, weights)` method.
+        A SamplerModel object.
     x_data:
         The X values to plot (vector of length N; or )
     """
+    if not hasattr(sampler_model, 'predict'):
+        raise ValueError("Expects a SamplerModel object.")
     x_data = np.array(x_data).flatten().reshape(-1,1)
     def wb_post_pred(sampler):
-        if len(sampler.samples)>0:
-            samples = sampler.get_samples()  # Get samples from sampler.
-            samples = np.vstack(samples)  # Convert to numpy array.
-            S = samples.shape[0]  # Get number of models.
-            y_pred = model.forward(x_data, samples)
+        samples = sampler.get_samples()  # Get samples from sampler.
+        samples = np.vstack(samples)  # Convert to numpy array.
+        S = samples.shape[0]  # Get number of models.
+        if S>0:
+            y_pred = sampler_model.predict(X=x_data, samples=samples)
             x_vals = np.tile(x_data, reps=(S,1,1))
             assert y_pred.shape == x_vals.shape
             # Build W&B table and plot:
@@ -718,7 +721,6 @@ class BBVI:
     def _callback(self, params, iteration, gradient):
         # Calculate ELBO:
         elbo_value = -self.variational_objective(params, iteration)
-        elbo_value = elbo_value[0]  # Unpack single value from matrix.
         # Calculate magnitude of gradient:
         grad_mag = np.linalg.norm(self.variational_gradient(params, iteration))
         # Update history:
@@ -781,10 +783,13 @@ class BBVI:
         (The `iteration` parameter is required by ADAM but is not used.)
         """
         Mu, logStDev = self._unstack(params)
-        eps_S = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
+        eps_sample = self.np_random.randn(self.num_samples,self.dims)  # Each row is a different sample.
         StDev = np.exp(logStDev)
-        W_S = eps_S * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
-        posterior_term = np.mean(self.log_target_func(W_S), axis=0)
+        params_sample = eps_sample * StDev + Mu  # Perturb StDev element-wise for each of `num_samples` in eps_S.
+        posterior_vector = self.log_target_func(params_sample).flatten()
+        if len(posterior_vector) != self.num_samples:
+            raise RuntimeError(f"Expected posterior to have to be a vector of length {self.num_samples} not {posterior_vector.shape}.")
+        posterior_term = np.mean(posterior_vector)
         gaussian_entropy_term = self.gaussian_entropy(logStDev)
         elbo_approx = posterior_term + gaussian_entropy_term
         return -elbo_approx
@@ -863,6 +868,7 @@ class BBVI:
         Sigma = np.exp(logStDev)**2
         # Use means and variances to generate samples from proposal distributions:
         samples = np_random.normal(loc=Mu, scale=Sigma, size=(num_samples, *Mu.shape))
+        samples = samples.reshape(num_samples,self.dims)  # Return S by (D+N*L) matrix.
         return samples
     
     def save_state(self, filepath, replace=False):

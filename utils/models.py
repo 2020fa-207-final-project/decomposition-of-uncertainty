@@ -361,7 +361,7 @@ class BNN:
         W_layers = self.unstack_weights(W=W)
 
         # Determine shape of output:
-        Y_shape = tuple([*X.shape[:-1], self.layers['output_n'] ])  # Determine shape of output.
+        Y_shape = tuple([S,*X.shape[1:-1], self.layers['output_n'] ])  # Determine shape of output.
 
         # Copy data to values to iterate through the network
         try:
@@ -464,6 +464,7 @@ class BNN_LV(BNN):
             'zero' : No noise is added (i.e. adds columns of zeros instead of noise features).
             [tensor-like object] : Adds user-specified noise.
         """
+        assert len(X.shape) in {2,3}, "X must have 2 or 3 dimensions."
         Z_shape = tuple((*X.shape[:-1],self.L))
         if isinstance(input_noise, str) and input_noise=='auto':
             Z = self.random.normal(loc=0, scale=self.gamma, size=Z_shape)
@@ -472,12 +473,34 @@ class BNN_LV(BNN):
         else:
             try:
                 Z = input_noise
-                assert Z.shape == Z_shape
+                if len(Z.shape)==2:
+                    assert Z.shape == Z_shape
+                elif len(Z.shape)==3:
+                    assert Z.shape[1:] == Z_shape
+                else:
+                    raise ValueError
             except:
                 wrong_shape = input_noise.shape if hasattr(input_noise, 'shape') else {type(input_noise)}
                 raise ValueError(f"Expected a tensor-like object with shape {Z_shape} , not {wrong_shape}.")
         self.last_input_noise = Z  # Store last noise for access during training.
-        X_ = np.append(X,Z, axis=-1)
+        # If either X or Z is 3 dimensional, tile them so both stacks are the same size:
+        if len(X.shape)==3 or len(Z.shape)==3:
+            # Make both 3 dimensional:
+            if not len(X.shape)==3:
+                X = X.reshape(1,*X.shape)
+            if not len(Z.shape)==3:
+                Z = Z.reshape(1,*Z.shape)
+            # Get number of stacks:
+            S = max(X.shape[0],Z.shape[0])
+            assert X.shape[0] in {1,S}, f"If either X or Z is stacked, they must have the same stack size; cannot broadcast {X.shape} and {Z.shape}"
+            assert Z.shape[0] in {1,S}, f"If either X or Z is stacked, they must have the same stack size; cannot broadcast {X.shape} and {Z.shape}"
+            # Repeat one input if needed to get equal stacks:
+            if X.shape[0]<S:
+                X = np.tile(X, reps=(S,1,1))
+            if Z.shape[0]<S:
+                Z = np.tile(X, reps=(S,1,1))
+        # Augment X with Z:
+        X_ = np.concatenate([X,Z], axis=-1)
         return X_
     
     def add_output_noise(self,Y_, output_noise='auto'):
@@ -499,7 +522,12 @@ class BNN_LV(BNN):
         else:
             try:
                 Eps = output_noise
-                assert Eps.shape == Eps_shape
+                if len(Eps.shape)==2:
+                    assert Eps.shape == Eps_shape
+                elif len(Eps.shape)==3:
+                    assert Eps.shape[1:] == Eps_shape
+                else:
+                    raise ValueError
             except:
                 wrong_shape = output_noise.shape if hasattr(output_noise, 'shape') else {type(output_noise)}
                 raise ValueError(f"Expected a tensor-like object with shape {Eps_shape} , not {wrong_shape}.")
@@ -565,19 +593,17 @@ class BayesianModel:
         prior_latents_mean = 0.0,
         prior_latents_stdev = 1.0,
         likelihood_stdev = 1.0,
-        latent_gamma = [1.0],  # One value per latent feautre.
-        latent_sigma = [1.0],  # One value per model output.
+        output_noise_stdev = 1.0,
+        label = '',
     ):
         
         # Check inputs:
         assert len(X.shape)==2, f"Expects X to be N by M, not {X.shape}"
         assert len(Y.shape)==2, f"Expects Y to be N by K, not {Y.shape}"
         assert X.shape[0]==Y.shape[0], f"Expects X {X.shape} and Y {Y.shape} to have same first dimension."
-        latent_gamma = latent_gamma if isinstance(latent_gamma, list) else [latent_gamma]  # Make list.
-        latent_sigma = latent_sigma if isinstance(latent_sigma, list) else [latent_sigma]  # Make list.
         
         # Get dimensions:
-        self.L = len(latent_gamma)
+        self.L = 1
         self.N = X.shape[0]
         self.M = X.shape[1]
         self.K = Y.shape[1]
@@ -592,21 +618,27 @@ class BayesianModel:
         self.prior_latents_mean = prior_latents_mean
         self.prior_latents_stdev = prior_latents_stdev
         self.likelihood_stdev = likelihood_stdev
-        self.latent_gamma = latent_gamma
-        self.latent_sigma = latent_sigma
+        self.output_noise_stdev = output_noise_stdev
+        self.label = label
 
-    def predict(self, W, Z):
-        return self.nn.forward(X=self.X, weights=W, input_noise=Z)
+    @staticmethod
+    def sum_over_samples(tensor):
+        # Helper: Sum across all by the first dimension:
+        num_samples = tensor.shape[0]
+        return np.sum( tensor.reshape(num_samples,-1), axis=-1)
+
+    def predict(self, X, W):
+        return self.nn.forward(X=X, weights=W, input_noise='auto', output_noise='auto')
         
     def log_prior_weights(self, W):
         mu = self.prior_weights_mean
         sigma = self.prior_weights_stdev
-        return np.sum(log_gaussian(x=W, mu=mu, sigma=sigma), axis=-1)
+        return self.sum_over_samples( log_gaussian(x=W, mu=mu, sigma=sigma) )
     
     def log_prior_latents(self, Z):
         mu = self.prior_latents_mean
         sigma = self.prior_latents_stdev
-        return np.sum(np.sum(log_gaussian(x=Z, mu=mu, sigma=sigma), axis=-1), axis=-1)
+        return self.sum_over_samples( log_gaussian(x=Z, mu=mu, sigma=sigma) )
         
     def log_prior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z)
@@ -614,7 +646,7 @@ class BayesianModel:
     def log_likelihood(self, W, Z):
         mu = self.nn.forward(X=self.X, weights=W, input_noise=Z)
         sigma = self.likelihood_stdev
-        return np.sum(log_gaussian(x=self.Y, mu=mu, sigma=sigma), axis=0)
+        return self.sum_over_samples( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
     
     def log_posterior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
@@ -629,11 +661,17 @@ class SamplerModel:
     
     def __init__(
         self,
-        model,
+        model,  # BayesianModel object.
     ):
         
-        # Store model:
+        # Store wrapped model:
         self.model = model
+
+        # Get properties of wrapped model:
+        self.label = label
+        self.X = model.X
+        self.Y = model.Y
+        self.nn = model.nn
         
         # Store dimensions of wrapped model:
         self.L = model.L
@@ -673,7 +711,7 @@ class SamplerModel:
         # Reshape and concatenate:
         W_flat = W.reshape(S,self.D)
         Z_flat = Z.reshape(S,self.N*self.L)
-        samples = np.concatenate([W_flat,Z_flat],axis=1)  # Create 1 by (1*D+N*L) matrix.
+        samples = np.concatenate([W_flat,Z_flat],axis=-1)  # Create 1 by (1*D+N*L) matrix.
         return samples
     
     def unstack(self, samples):
@@ -696,21 +734,46 @@ class SamplerModel:
         ]).flatten()
         assert len(results)==Z.shape[0], f"Vectorization over S samples had unexpected results: {results} ."
         return results
+
+    def predict(self, X, samples):
+        W, _ = self.unstack(samples)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.predict, W=W, Z=Z)
+        return self.model.predict(X=X, W=W)
         
     def log_prior(self, samples):
         W, Z = self.unstack(samples)
-        if len(Z.shape)==3:
-            return self.vectorize(self.model.log_prior, W, Z)
-        return self.model.log_prior(W, Z)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_prior, W=W, Z=Z)
+        return self.model.log_prior(W=W, Z=Z)
     
     def log_likelihood(self, samples):
         W, Z = self.unstack(samples)
-        if len(Z.shape)==3:
-            return self.vectorize(self.model.log_likelihood, W, Z)
-        return self.model.log_likelihood(W, Z)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_likelihood, W=W, Z=Z)
+        return self.model.log_likelihood(W=W, Z=Z)
     
     def log_posterior(self, samples):
         W, Z = self.unstack(samples)
-        if len(Z.shape)==3:
-            return self.vectorize(self.model.log_posterior, W, Z)
-        return self.model.log_posterior(W, Z)
+        # if len(Z.shape)==3:
+        #     return self.vectorize(self.model.log_posterior, W=W, Z=Z)
+        return self.model.log_posterior(W=W, Z=Z)
+
+    def display(self):
+        from IPython.display import display, Math
+        prior_weights_mean = np.round(self.model.prior_weights_mean, 3)
+        prior_weights_stdev = np.round(self.model.prior_weights_stdev, 3)
+        prior_latents_mean = np.round(self.model.prior_latents_mean, 3)
+        prior_latents_stdev = np.round(self.model.prior_latents_stdev, 3)
+        likelihood_stdev = np.round(self.model.likelihood_stdev, 3)
+        output_noise_stdev = np.round(self.model.output_noise_stdev, 3)
+        s = "" if self.label is None else "\\textbf{{{} :}}\\\\".format(self.label)
+        s += "W \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_weights_mean, prior_weights_stdev**2 )
+        s += "Z \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_latents_mean, prior_latents_stdev**2 )
+        s += "Y|W,Z \\;\\sim\\; N(\\; g_W(X),\\; {}\\; ) + N( 0, {} ) \\\\".format( likelihood_stdev**2, output_noise_stdev**2 )
+        s += "W,Z|Y \\;\\sim\\; ? \\;\\rightarrow\\; \\text{{BNN LV}} \\\\".format()
+        s = Math(s)
+        display(s)
+
+    def _repr_html_(self):
+        self.display()
