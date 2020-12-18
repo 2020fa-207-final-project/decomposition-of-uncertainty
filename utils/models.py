@@ -229,6 +229,16 @@ class SamplerModel:
         #     return self.vectorize(self.model.log_posterior, W=W, Z=Z)
         return self.model.log_posterior(W=W, Z=Z)
 
+    def info(self):
+        info = {
+            'L' : self.L,
+            'N' : self.N,
+            'M' : self.M,
+            'K' : self.K,
+            'D' : self.D,
+        }
+        return info
+
     def display(self):
         from IPython.display import display, Math
         prior_weights_mean = np.round(self.model.prior_weights_mean, 3)
@@ -287,7 +297,7 @@ class BNN:
         self.random = np.random.RandomState(seed)
 
         if weights is None:
-            self.weights = self.random.normal(0, 1, size=(1, self.D))
+            self.weights = self.random_weights()
         else:
             assert type(weights) == np.ndarray, "Error: Weights must be a numpy array"
             assert len(weights.shape) == 2, "Error: Weights must be specified as a 2D numpy array"
@@ -344,6 +354,9 @@ class BNN:
         layers_D.append(D - int(np.sum(layers_D)))
 
         return D, layers_D
+
+    def random_weights(self, S=1):
+        return self.random.normal(0, 1, size=(S, self.D))
 
     def stack_weights(self, W_layers):
         """
