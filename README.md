@@ -1,22 +1,52 @@
+## Welcome to decomposition of uncertainty.
+
+### Authors
+- Owen Callen
+- Gabriel Pestre
+- Hayden Sansum
+- Nikhil Vanderklaauw
+
+
+This project is a review and extension of the work, ["Decomposition of Uncertainty in Bayesian Deep Learning
+for Efficient and Risk-sensitive Learning"](http://proceedings.mlr.press/v80/depeweg18a/depeweg18a.pdf) by Stefan Depeweg, Jose Miguel Hernandez-Lobato,
+Finale Doshi-Velez, and Steffen Udluft.
+
+#### Important components of the repo include: 
+Here is our [Final Report](https://github.com/2020fa-207-final-project/decomposition-of-uncertainty/blob/master/decomposition_of_uncertainty_report.ipynb).
+
+We also split our code into three primary examples.
+- Bimodal noise
+- Heteroscedastic noise
+- Wet chicken example (Reinforcement learning context)
+
+For each of the examples we attempted three different sampling techniques.
+- Hamiltonian Monte Carlo. 
+- No U-turn sampler. 
+- Black Box variational inference.
+
 ## General setup:
 
-to setup the env:  
+The section for it is for anyone interested in running our code.
+
+After Fork in the repo to your local machine, follow these steps to install the Pipenv We used in developing this library.
+
+To setup the env:  
 `pip install pipenv`  
 `pipenv install --dev`
 
-to install new packages:  
+To install new packages:  
 `pipenv install ... # some package`
 
-to run tests:  
+To run tests:  
 `pipenv run pytest`  
 or  
 `pipenv shell`  
 `pytest`  
 
-to enter the shell:  
+To enter the shell:  
 `pipenv shell`  
 
-to leave the shell:
+To leave the shell:
 `exit`  
 
 ## Setup on DeepNote:
