@@ -1,5 +1,6 @@
 import scipy as sp
 import autograd.numpy as np
+import pandas as pd
 
 from scipy.spatial.distance import pdist, squareform
 
@@ -88,14 +89,94 @@ def uncertainty_decompose_entropy(bnn_lv, X_train, w_samples, S, N, N2, D, avg_w
     epistemic_entropy = overall_entropy - aleatoric_entropy
 
 
-    fig, ax = plt.subplots(1,2,figsize=(17,6))
+    fig, ax = plt.subplots(1,3,figsize=(21,6))
     ax[0].plot(moving_average(x_test_space_small.flatten(),avg_window),
-            moving_average(aleatoric_entropy.flatten(),avg_window))
-    ax[0].set_title('Aleatoric Entropy')
+            moving_average(overall_entropy.flatten(),avg_window))
+    ax[0].set_title('Total Uncertainty')
 
     ax[1].plot(moving_average(x_test_space_small.flatten(),avg_window),
+            moving_average(aleatoric_entropy.flatten(),avg_window))
+    ax[1].set_title('Aleatoric Uncertainty')
+
+    ax[2].plot(moving_average(x_test_space_small.flatten(),avg_window),
             moving_average(epistemic_entropy.flatten(),avg_window))
-    ax[1].set_title('Epistemic Entropy')
+    ax[2].set_title('Epistemic Uncertainty')
     plt.show()
     
     return epistemic_entropy, aleatoric_entropy
+
+
+def chicken_entropy_decompose(bnn_lv_in, transitions_in, w_samples_in, N, N2, L): 
+    """
+    2D decomposition for 3x5 wet chicken grid
+    """
+
+    S = w_samples_in.shape[0] # number of samples
+    D = 2 # Dimensions of y
+      
+    x1_test_space_lst = np.arange(min(transitions_in['start_x']), 1+max(transitions_in['start_x']))
+    x2_test_space_lst = np.arange(min(transitions_in['start_y']), 1+max(transitions_in['start_y']))
+
+    x1_test_space_grid, x2_test_space_grid = np.meshgrid(x1_test_space_lst,x2_test_space_lst)
+
+    x1_test_space = list(x1_test_space_grid.ravel())*N
+    x2_test_space = list(x2_test_space_grid.ravel())*N
+    x_test_space = np.vstack([x1_test_space,x2_test_space,
+                          [0]*len(x2_test_space), [0]*len(x2_test_space)]).T
+
+
+    x1_test_space_small = list(x1_test_space_grid.ravel())*N2
+    x2_test_space_small = list(x2_test_space_grid.ravel())*N2
+    x_test_space_small = np.vstack([x1_test_space_small,x2_test_space_small,
+                          [0]*len(x2_test_space_small), [0]*len(x2_test_space_small)]).T
+
+    
+    
+    # Get the stack of predictions from the S samples of weights
+    y_star = bnn_lv_in.forward(x_test_space_small, w_samples_in.squeeze(1))
+
+    # Reshape it to be (NxSx2- stacks(x) by samples by dimensions) - calculate entropies
+    overall_entropy = knn_entropy(y_star.swapaxes(0,1))
+
+    # Create a duplicated set of data to predict L times per set of samples
+    x_test_stack = np.tile(x_test_space_small, reps=(L,1))
+    y_stack = bnn_lv_in.forward(x_test_stack, w_samples_in.squeeze(1))
+    y_stack = y_stack.reshape(S,-1,L,D) #samples x N x L x dim
+
+    epi_H_W = np.stack([knn_entropy(tensor) for tensor in y_stack],axis=-1)
+    aleatoric_entropy = np.mean(epi_H_W, axis=-1)
+
+    epistemic_entropy = overall_entropy - aleatoric_entropy
+    
+    ###
+    decomposition_df = pd.DataFrame({'x':x_test_space_small[:,0], 'y':x_test_space_small[:,1],
+                                     'epistemic':epistemic_entropy, 'aleatoric':aleatoric_entropy})
+    decomposition_df.sort_values(['x','y'],inplace=True)
+    decomposition_df_avg = decomposition_df.groupby(['x','y']).mean().reset_index()
+    
+    
+    
+    fig, ax = plt.subplots(1,2,figsize=(20,10))
+    plot1 = ax[0].imshow(decomposition_df_avg.epistemic.values.reshape(5,3),origin='lower')
+    ax[0].set_title('Epistemic')
+    ax[0].set_xticks([0,1,2])
+    ax[0].set_xticklabels([1, 2, 3])
+    ax[0].set_yticks(np.arange(5))
+    ax[0].set_yticklabels(np.arange(1,6))
+    for (j,i),label in np.ndenumerate(np.round(decomposition_df_avg.epistemic.values.reshape(5,3),2)):
+        ax[0].text(i,j,label,ha='center',va='center')
+    fig.colorbar(plot1,ax=ax[0])
+
+    plot2 = ax[1].imshow(decomposition_df_avg.aleatoric.values.reshape(5,3),origin='lower')
+    ax[1].set_title('Aleatoric')
+    ax[1].set_xticks([0,1,2])
+    ax[1].set_xticklabels([1, 2, 3])
+    ax[1].set_yticks(np.arange(5))
+    ax[1].set_yticklabels(np.arange(1,6))
+    for (j,i),label in np.ndenumerate(np.round(decomposition_df_avg.aleatoric.values.reshape(5,3),2)):
+        ax[1].text(i,j,label,ha='center',va='center')
+    fig.colorbar(plot2,ax=ax[1])
+
+    plt.show()
+    
+    return decomposition_df_avg
