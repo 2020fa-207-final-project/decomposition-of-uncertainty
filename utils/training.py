@@ -211,13 +211,6 @@ class HMC:
         """
         # return -np.log(target_func(q))
         result = -self.log_target_func(q)
-        try:
-            # If result is 1-by-1 result.
-            result = result.flatten()
-            assert len(result)==1
-            result = result[0]
-        except:
-            pass
         return result
     
     # Define the gradient of the potential energy with respect to position:
@@ -406,7 +399,8 @@ class HMC:
         Remove burn-in (by negative indexing) and perform thinning (by list slicing).
         Builds `.samples` from `.raw_samples`.
         """
-        return self.raw_samples[self.burn_num::self.thinning_factor]
+        samples = self.raw_samples[self.burn_num::self.thinning_factor]
+        return np.vstack(samples)
 
     @property
     def samples(self):
