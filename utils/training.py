@@ -211,13 +211,6 @@ class HMC:
         """
         # return -np.log(target_func(q))
         result = -self.log_target_func(q)
-        try:
-            # If result is 1-by-1 result.
-            result = result.flatten()
-            assert len(result)==1
-            result = result[0]
-        except:
-            pass
         return result
     
     # Define the gradient of the potential energy with respect to position:
