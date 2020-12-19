@@ -106,11 +106,11 @@ def uncertainty_decompose_entropy(bnn_lv, X_train, w_samples, S, N, N2, D, avg_w
     return epistemic_entropy, aleatoric_entropy
 
 
-def chicken_entropy_decompose(bnn_lv_in, transitions_in, w_samples_in, N, N2, L): 
+def chicken_entropy_decompose(bnn_lv_in, transitions_in, w_samples_in, N, N2, L):  
     """
     2D decomposition for 3x5 wet chicken grid
     """
-
+        
     S = w_samples_in.shape[0] # number of samples
     D = 2 # Dimensions of y
       
@@ -148,35 +148,48 @@ def chicken_entropy_decompose(bnn_lv_in, transitions_in, w_samples_in, N, N2, L)
 
     epistemic_entropy = overall_entropy - aleatoric_entropy
     
-    ###
+    ### Saving out dataframe
     decomposition_df = pd.DataFrame({'x':x_test_space_small[:,0], 'y':x_test_space_small[:,1],
                                      'epistemic':epistemic_entropy, 'aleatoric':aleatoric_entropy})
     decomposition_df.sort_values(['x','y'],inplace=True)
     decomposition_df_avg = decomposition_df.groupby(['x','y']).mean().reset_index()
     
+    ### Plotting
     
+    epistemic_im = np.zeros((5,3))
+    aleatoric_im = np.zeros((5,3))
+    for i, row in decomposition_df_avg.iterrows():
+        x = int(row['x'])-1
+        y = int(row['y'])-1
+        epistemic_im[y,x] = row['epistemic']
+        aleatoric_im[y,x] = row['aleatoric']
     
     fig, ax = plt.subplots(1,2,figsize=(20,10))
-    plot1 = ax[0].imshow(decomposition_df_avg.epistemic.values.reshape(5,3),origin='lower')
+    plot1 = ax[0].imshow(epistemic_im,origin='lower')
     ax[0].set_title('Epistemic')
     ax[0].set_xticks([0,1,2])
     ax[0].set_xticklabels([1, 2, 3])
+    ax[0].set_xlabel('x')
     ax[0].set_yticks(np.arange(5))
     ax[0].set_yticklabels(np.arange(1,6))
-    for (j,i),label in np.ndenumerate(np.round(decomposition_df_avg.epistemic.values.reshape(5,3),2)):
+    ax[0].set_ylabel('y')
+    for (j,i),label in np.ndenumerate(np.round(epistemic_im,2)):
         ax[0].text(i,j,label,ha='center',va='center')
     fig.colorbar(plot1,ax=ax[0])
 
-    plot2 = ax[1].imshow(decomposition_df_avg.aleatoric.values.reshape(5,3),origin='lower')
+    plot2 = ax[1].imshow(aleatoric_im,origin='lower')
     ax[1].set_title('Aleatoric')
     ax[1].set_xticks([0,1,2])
     ax[1].set_xticklabels([1, 2, 3])
+    ax[1].set_xlabel('x')
     ax[1].set_yticks(np.arange(5))
     ax[1].set_yticklabels(np.arange(1,6))
-    for (j,i),label in np.ndenumerate(np.round(decomposition_df_avg.aleatoric.values.reshape(5,3),2)):
+    ax[1].set_ylabel('y')
+    for (j,i),label in np.ndenumerate(np.round(aleatoric_im,2)):
         ax[1].text(i,j,label,ha='center',va='center')
     fig.colorbar(plot2,ax=ax[1])
 
     plt.show()
     
     return decomposition_df_avg
+    
