@@ -143,7 +143,7 @@ class BayesianModel:
         }
         return info
 
-    def description(self:
+    def description(self):
         description = ""
         for param_name in [
             'prior_weights_mean',
@@ -154,7 +154,7 @@ class BayesianModel:
             'output_noise_stdev',
         ]:
             param_value = getattr(self, param_name)
-            description += f"    {param_name} = {param_value}\n"
+            description += f"{param_name} = {param_value}\n"
         description += "\n"
         description += """
         def predict(X, W):
@@ -184,11 +184,10 @@ class BayesianModel:
         description = re.sub(f'self\.','',description)
         return description
 
-    def describe(self, indent=0):
-        print(self.description(indent=indent))
+    def describe(self):
+        print(self.description())
 
     def to_latex(self):
-        from IPython.display import display, Math
         prior_weights_mean = np.round(self.prior_weights_mean, 3)
         prior_weights_stdev = np.round(self.prior_weights_stdev, 3)
         prior_latents_mean = np.round(self.prior_latents_mean, 3)
@@ -203,6 +202,7 @@ class BayesianModel:
         return s
         
     def display(self):
+        from IPython.display import display, Math
         s = self.to_latex()
         s = Math(s)
         display(s)
@@ -354,11 +354,11 @@ class SamplerModel:
     def info(self):
         return self.model.info()
     
-    def description(self, indent=0):
-        return self.model.description(indent=indent)
+    def description(self):
+        return self.model.description()
     
-    def describe(self, indent=0):
-        self.model.describe(indent=indent)
+    def describe(self):
+        self.model.describe()
 
     def display(self):
         from IPython.display import display, Math
