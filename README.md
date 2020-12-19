@@ -17,10 +17,10 @@ Finale Doshi-Velez, and Steffen Udluft.
 #### Final Report.
 Our final report can be found [here](https://github.com/2020fa-207-final-project/decomposition-of-uncertainty/blob/master/decomposition_of_uncertainty_report.ipynb).
 
-### Examples
+#### Examples
 Our example can be found in the notebooks folder, and they are split into three primary examples.
-- Bimodal noise
-- Heteroscedastic noise
+- Bimodal noise.
+- Heteroscedastic noise.
 - Wet chicken example (Reinforcement learning context)
 
 For each of the examples we attempted three different sampling techniques.
@@ -29,7 +29,7 @@ For each of the examples we attempted three different sampling techniques.
 - Black Box variational inference.
 
 
-### Implementations of Bayesian models.
+#### Implementations of Bayesian models.
 This code can be found in the utils folder.
 For neural networks, we describe the dimensions
 with the following conventions, unless otherwise noted:
