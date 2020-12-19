@@ -260,4 +260,43 @@ class WetChicken2D:
         transitions = pd.DataFrame(transitions)
 
         return transitions
+    
+    def plot_environment(self, ax=None):
+        
+        if ax:
+            fig = ax.figure
+        else:
+            fig,ax = plt.subplots(1,1,figsize=(16,5))
+        
+        ax.set_xticks(range(1,self.L+1))
+        ax.set_yticks(range(1,self.W+1))
+        for x in range(0,self.L+1):
+            ax.plot([x+0.5,x+0.5],[0.5,self.W+0.5], lw=1, color='blue')
+        for y in range(0,self.W+1):
+            ax.plot([0.5,self.L+0.5],[y+0.5,y+0.5], lw=1, color='blue')
+        ax.set_xlim((0,self.L+0.5))
+        ax.set_ylim((0.5,self.W+0.5))
+        
+        ax.tick_params(labeltop=True, labelright=True, width=0)
+        
+        return fig,ax
+
+    def plot_episode(self, ep, fade=False, ax=None):
+        
+        fig, ax = self.plot_environment(ax=ax)
+        
+        states = self.state_history[ep]
+        
+        if fade:
+            n_steps = len(states)
+            for t in range(n_steps-1):
+                xs = states[t][0],states[t+1][0]
+                ys = states[t][1],states[t+1][1]
+                alpha = 0.5 + 0.5*(t)/(n_steps-2)
+                ax.plot(ys, xs, color='red', alpha=alpha, lw=3, marker='o')
+        else:
+            xs, ys = [x for x,y in states], [y for x,y in states]
+            ax.plot(ys, xs, color='red', alpha=0.8, lw=3, marker='o')
+        
+        return fig,ax
 
