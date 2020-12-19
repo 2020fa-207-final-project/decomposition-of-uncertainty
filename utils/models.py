@@ -143,7 +143,7 @@ class BayesianModel:
         }
         return info
 
-    def description(self, indent=0):
+    def description(self:
         description = ""
         for param_name in [
             'prior_weights_mean',
@@ -156,22 +156,38 @@ class BayesianModel:
             param_value = getattr(self, param_name)
             description += f"    {param_name} = {param_value}\n"
         description += "\n"
-        for func_name in [
-            'log_prior',
-            'log_likelihood',
-            'log_posterior',
-        ]:
-            func_code = inspect.getsource(getattr(self, func_name))
-            func_code = re.sub(f"{func_name}\(self, *", f"{func_name}(", func_code)
-            description += func_code + '\n'
+        description += """
+        def predict(X, W):
+            return nn.forward(X=X, weights=W, input_noise='auto', output_noise='auto')
+            
+        def log_prior_weights(W):
+            mu = prior_weights_mean
+            sigma = prior_weights_stdev
+            return np.sum( log_gaussian(x=W, mu=mu, sigma=sigma) )
+        
+        def log_prior_latents(Z):
+            mu = prior_latents_mean
+            sigma = prior_latents_stdev
+            return np.sum( log_gaussian(x=Z, mu=mu, sigma=sigma) ).reshape(1,-1)
+            
+        def log_prior(W, Z):
+            return log_prior_weights(W) + log_prior_latents(Z)
+        
+        def log_likelihood(W, Z):
+            mu = nn.forward(X=X, weights=W, input_noise=Z)
+            sigma = likelihood_stdev
+            np.sum( log_gaussian(x=Y, mu=mu, sigma=sigma) )
+        
+        def log_posterior(W, Z):
+            return log_prior_weights(W) + log_prior_latents(Z) + log_likelihood(W, Z)
+        """
         description = re.sub(f'self\.','',description)
-        description = description.replace('\n', '\n'+indent*'\t')
         return description
 
     def describe(self, indent=0):
         print(self.description(indent=indent))
 
-    def display(self):
+    def to_latex(self):
         from IPython.display import display, Math
         prior_weights_mean = np.round(self.prior_weights_mean, 3)
         prior_weights_stdev = np.round(self.prior_weights_stdev, 3)
@@ -184,11 +200,47 @@ class BayesianModel:
         s += "Z \\;\\sim\\; N(\\; {},\\; {}\\; ) \\\\".format( prior_latents_mean, prior_latents_stdev**2 )
         s += "Y|W,Z \\;\\sim\\; N(\\; g_W(X),\\; {}\\; ) + N( 0, {} ) \\\\".format( likelihood_stdev**2, output_noise_stdev**2 )
         s += "W,Z|Y \\;\\sim\\; ? \\;\\rightarrow\\; \\text{{BNN LV}} \\\\".format()
+        return s
+        
+    def display(self):
+        s = self.to_latex()
         s = Math(s)
         display(s)
 
     def _repr_html_(self):
         self.display()
+        
+
+    def predict(self, X, W):
+        return self.nn.forward(X=X, weights=W, input_noise='auto', output_noise='auto')
+        
+    def log_prior_weights(self, W):
+        mu = self.prior_weights_mean
+        sigma = self.prior_weights_stdev
+        if len(W.shape)==2:
+            return self.sum_over_samples( log_gaussian(x=W, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects W to have 2 dimensions, not {W.shape}.")
+    
+    def log_prior_latents(self, Z):
+        mu = self.prior_latents_mean
+        sigma = self.prior_latents_stdev
+        if len(Z.shape)==2:
+            return np.sum( log_gaussian(x=Z, mu=mu, sigma=sigma) ).reshape(1,-1)
+        elif len(Z.shape)==3:
+            return self.sum_over_samples( log_gaussian(x=Z, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects Z to have 2 or 3 dimensions, not {Z.shape}.")
+        
+    def log_prior(self, W, Z):
+        return self.log_prior_weights(W) + self.log_prior_latents(Z)
+    
+    def log_likelihood(self, W, Z):
+        mu = self.nn.forward(X=self.X, weights=W, input_noise=Z)
+        sigma = self.likelihood_stdev
+        if len(Z.shape)==2:
+            return np.sum( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+        elif len(Z.shape)==3:
+            return self.sum_over_samples( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects Z to have 2 or 3 dimensions, not {Z.shape}.")
         
     
 class SamplerModel:
