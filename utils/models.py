@@ -105,12 +105,18 @@ class BayesianModel:
     def log_prior_weights(self, W):
         mu = self.prior_weights_mean
         sigma = self.prior_weights_stdev
-        return self.sum_over_samples( log_gaussian(x=W, mu=mu, sigma=sigma) )
+        if len(W.shape)==2:
+            return self.sum_over_samples( log_gaussian(x=W, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects W to have 2 dimensions, not {W.shape}.")
     
     def log_prior_latents(self, Z):
         mu = self.prior_latents_mean
         sigma = self.prior_latents_stdev
-        return self.sum_over_samples( log_gaussian(x=Z, mu=mu, sigma=sigma) )
+        if len(Z.shape)==2:
+            return np.sum( log_gaussian(x=Z, mu=mu, sigma=sigma) ).reshape(1,-1)
+        elif len(Z.shape)==3:
+            return self.sum_over_samples( log_gaussian(x=Z, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects Z to have 2 or 3 dimensions, not {Z.shape}.")
         
     def log_prior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z)
@@ -118,7 +124,11 @@ class BayesianModel:
     def log_likelihood(self, W, Z):
         mu = self.nn.forward(X=self.X, weights=W, input_noise=Z)
         sigma = self.likelihood_stdev
-        return self.sum_over_samples( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+        if len(Z.shape)==2:
+            return np.sum( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+        elif len(Z.shape)==3:
+            return self.sum_over_samples( log_gaussian(x=self.Y, mu=mu, sigma=sigma) )
+        raise NotImplementedError(f"Expects Z to have 2 or 3 dimensions, not {Z.shape}.")
     
     def log_posterior(self, W, Z):
         return self.log_prior_weights(W) + self.log_prior_latents(Z) + self.log_likelihood(W, Z)
