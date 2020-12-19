@@ -400,6 +400,8 @@ class HMC:
         Builds `.samples` from `.raw_samples`.
         """
         samples = self.raw_samples[self.burn_num::self.thinning_factor]
+        if len(samples)==0:
+            return np.zeros((0,self.dims))
         return np.vstack(samples)
 
     @property
@@ -898,11 +900,10 @@ def build_wb_callback_plotfunc(plot_func, filename='posterior_predictive', inter
     """
     assert 'samples' not in kwargs, "No need to provide `samples`, as they will be extracted from current HMC state."
     def callback(sampler, iteration):
-        if iteration % interval == 0:
+        if iteration % interval != 0:
             return
         filepath = os.path.join(sampler.wb_base_path, filename+'.png')
         samples = sampler.get_samples()  # Get samples from sampler.
-        samples = np.vstack(samples)  # Convert to numpy array.
         S = samples.shape[0]  # Get number of models.
         if S>0:
             kwargs['samples'] = samples  # Add samples to keyword arguments.
@@ -930,10 +931,9 @@ def build_wb_callback_postpred(sampler_model, x_data, interval=100):
         raise ValueError("Expects a SamplerModel object.")
     x_data = np.array(x_data).flatten().reshape(-1,1)
     def callback(sampler, iteration):
-        if iteration % interval == 0:
+        if iteration % interval != 0:
             return
         samples = sampler.get_samples()  # Get samples from sampler.
-        samples = np.vstack(samples)  # Convert to numpy array.
         S = samples.shape[0]  # Get number of models.
         if S>0:
             y_pred = sampler_model.predict(X=x_data, samples=samples)
