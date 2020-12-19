@@ -3,6 +3,7 @@ import autograd.scipy as sp
 from scipy import stats
 import pandas as pd
 
+import matplotlib.pyplot as plt
 
 class WetChicken2D:
 
