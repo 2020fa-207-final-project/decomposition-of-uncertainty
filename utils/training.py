@@ -399,7 +399,8 @@ class HMC:
         Remove burn-in (by negative indexing) and perform thinning (by list slicing).
         Builds `.samples` from `.raw_samples`.
         """
-        return self.raw_samples[self.burn_num::self.thinning_factor]
+        samples = self.raw_samples[self.burn_num::self.thinning_factor]
+        return np.vstack(samples)
 
     @property
     def samples(self):
