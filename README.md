@@ -6,15 +6,19 @@
 - Hayden Sansum
 - Nikhil Vanderklaauw
 
+### Purpose 
 
 This project is a review and extension of the work, ["Decomposition of Uncertainty in Bayesian Deep Learning
 for Efficient and Risk-sensitive Learning"](http://proceedings.mlr.press/v80/depeweg18a/depeweg18a.pdf) by Stefan Depeweg, Jose Miguel Hernandez-Lobato,
 Finale Doshi-Velez, and Steffen Udluft.
 
-#### Important components of the repo include: 
-Here is our [Final Report](https://github.com/2020fa-207-final-project/decomposition-of-uncertainty/blob/master/decomposition_of_uncertainty_report.ipynb).
+### Important components of the repo include: 
 
-We also split our code into three primary examples.
+#### Final Report.
+Our final report can be found [here](https://github.com/2020fa-207-final-project/decomposition-of-uncertainty/blob/master/decomposition_of_uncertainty_report.ipynb).
+
+### Examples
+Our example can be found in the notebooks folder, and they are split into three primary examples.
 - Bimodal noise
 - Heteroscedastic noise
 - Wet chicken example (Reinforcement learning context)
@@ -23,6 +27,43 @@ For each of the examples we attempted three different sampling techniques.
 - Hamiltonian Monte Carlo. 
 - No U-turn sampler. 
 - Black Box variational inference.
+
+
+### Implementations of Bayesian models.
+This code can be found in the utils folder.
+For neural networks, we describe the dimensions
+with the following conventions, unless otherwise noted:
+- The input X is generally a dataset with N rows and M features.
+  In some cases, we may have a "stack" of R datasets
+  (i.e. X may be a R-by-N-by-M tensor instead of the usual N-by-M matrix)
+  but this case is not supported by our initial implementations.
+- The output Y is generally an N-by-K matrix (for a K-output model)
+  but may also be R-by-N-by-K, analogously with the input X.
+- The weights W of a single neural network are stored
+  as a 1-by-D matrix (for a network with D weights).
+  When representing the weights of a set of S models
+  (e.g. mutiple samples from a posterior), the weights
+  may be stored in an S-by-D matrix. (Additionally,
+  our implementation has an internal representation
+  that uses a list of weights for each layer, but
+  that version need not be exposed to the user.)
+- In a latent variable model, the X and Y inputs follow the same
+  conventions as above, but L latent features of Gaussian noise
+  are appeneded to the input X to form an augmented input X'.
+  Typically there is a single latent variable (i.e. L=1),
+  but we have made our implementation flexible so that we can
+  exeperiment with multiple latent variables.
+  Additionally, Gaussian noise is added to each of the output Y
+  (potentially with a different variance for each of the K outputs),
+  to form a pertured output Y'.
+In summary:
+- R: number of "stacked" datasets for X and Y (and X' and Y').
+- N: number of data points in X and Y (and X' and Y').
+- M: number of features in X.
+- K: number of outputs in Y.
+- S: number of different models in W.
+- D: number of weights in each model.
+- L: number of latent noise inputs.
 
 ## General setup:
 
