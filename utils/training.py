@@ -3,6 +3,7 @@ import os
 import time
 
 from PIL import Image
+import matplotlib.pyplot as plt
 
 from autograd import numpy as np
 from autograd import scipy as sp
@@ -918,7 +919,7 @@ def build_wb_callback_plotfunc(plot_func, filename='posterior_predictive', inter
     return callback
 
 
-def build_wb_callback_postpred(sampler_model, x_data, interval=100):
+def build_wb_callback_postpred(sampler_model, x_data, mode='wandb', interval=100):
     """
     Build a callback function that produces a scatterplot of the posterior predictive
     for Weights and Biases.
@@ -926,6 +927,13 @@ def build_wb_callback_postpred(sampler_model, x_data, interval=100):
         A SamplerModel object.
     x_data:
         The X values to plot (vector of length N; or )
+    mode:
+        'wandb' : Uses W&B's built-in plotting tools to make a scatterplot. 
+            This mode has better integration with W&B's dashboard but less flexibility.
+        'pyplot' Uses pyplot to visualize the 95% confidence interval.
+            This mode saves the plot locally as a .png then uploads it to W&B.
+    interval:
+        How often to perform the callback (based on iteration number).
     """
     if not hasattr(sampler_model, 'predict'):
         raise ValueError("Expects a SamplerModel object.")
@@ -935,7 +943,10 @@ def build_wb_callback_postpred(sampler_model, x_data, interval=100):
             return
         samples = sampler.get_samples()  # Get samples from sampler.
         S = samples.shape[0]  # Get number of models.
-        if S>0:
+        if S==0:
+            print(f"Callback: No samples to plot.")
+            return
+        if mode=='wandb':
             y_pred = sampler_model.predict(X=x_data, samples=samples)
             x_vals = np.tile(x_data, reps=(S,1,1))
             assert y_pred.shape == x_vals.shape
@@ -944,6 +955,34 @@ def build_wb_callback_postpred(sampler_model, x_data, interval=100):
             table = sampler.wandb.Table(data=data, columns = ["class_x", "class_y"])
             sampler.wandb.log({"posterior_predictic" : sampler.wandb.plot.scatter(table, "class_x", "class_y")})
             print(f"Callback: Built plot with {samples.shape[0]} samples.")
+        elif mode=='pyplot':
+            # Get training data and define test values:
+            x_flat = x_data.flatten()
+            x_train = sampler_model.X.flatten()
+            y_train = sampler_model.Y.flatten()
+            samples = sampler.get_samples()
+            S = samples.shape[0]
+            Y_pred = sampler_model.predict(X=x_flat.reshape(-1,1), samples=samples).reshape(S,-1)
+            # Calculate percentiles:
+            y_lower = np.percentile(Y_pred, q=2.5, axis=0)
+            y_upper = np.percentile(Y_pred, q=97.5, axis=0)
+            y_med = np.percentile(Y_pred, q=50, axis=0)
+            # Plot with confidence:
+            fig,ax = plt.subplots(1, 1, figsize=(6,4))
+            ax.scatter(x_train, y_train, color='black', label='data')
+            ax.plot(x_flat, y_med, label="Median Prediction")
+            ax.fill_between(x_flat, y_lower, y_upper, alpha=0.4, color='r', label="95% Predictive Interval")
+            ax.set_title("Bayesian Neural Net Predictions with 95% CI")
+            ax.set_xlabel("X Test")
+            ax.set_ylabel("Y Predicted")
+            # Save plot locally and upload it to W&B:
+            filename = 'posterior_predictive'
+            filepath = os.path.join(sampler.wb_base_path, filename+'.png')
+            ax.figure.savefig(filepath)  # Save plot locally.
+            sampler.wandb.save(filepath, base_path=sampler.wb_base_path)  # Upload plot file to W&B.
+            img = Image.open(filepath)  # Load image as array.
+            sampler.wandb.log({filename:[sampler.wandb.Image(img, caption=filename)]})
+            print(f"Callback: Saved plot {filepath} ({samples.shape[0]} samples).")
         else:
-            print(f"Callback: No samples to plot.")
+            raise NotImplementedError(f"{mode} is not a valid mode: 'wandb', 'pyplot'.")
     return callback
